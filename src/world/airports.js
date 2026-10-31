@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { geoToWorld, AIRPORT_ELEVATION_M } from '../environment/phase6/geo.js';
 import { flatPlane, runwayEndMarkings, edgeLights, createPapi, RUNWAY, SOUTH_RUNWAY_X } from '../environment/phase6/voblAirport.js';
 import { createApproachLighting } from '../environment/phase6/approachLights.js';
+import { addSurfaceDetail } from '../render/visuals.js';
 
 // South India airports from assets/airports/south_india_airports.json (OurAirports, built by
 // tools/build_airports.py). Real positions, runway ends, headings, lengths and field elevations.
@@ -130,11 +131,11 @@ export class Airports {
     const group = new THREE.Group();
     group.name = `airport_${apt.icao}`;
     const mat = {
-      asphalt: new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 }),
-      taxi: new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.9 }),
-      apron: new THREE.MeshStandardMaterial({ color: 0x8f8f8a, roughness: 0.85 }),
-      paint: new THREE.MeshBasicMaterial({ color: 0xf2f2f2 }),
-      yellow: new THREE.MeshBasicMaterial({ color: 0xe8c000 }),
+      asphalt: addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x2b2c2e, roughness: 0.9 }), 'runway'),
+      taxi: addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x343538, roughness: 0.9 }), 'taxi'),
+      apron: addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x9a9a94, roughness: 0.85 }), 'apron'),
+      paint: new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.75 }),
+      yellow: new THREE.MeshStandardMaterial({ color: 0xe8c000, roughness: 0.75 }),
       glass: new THREE.MeshStandardMaterial({ color: 0x35596b, roughness: 0.15, metalness: 0.8 }),
       concrete: new THREE.MeshStandardMaterial({ color: 0xd2d2cc, roughness: 0.7 })
     };

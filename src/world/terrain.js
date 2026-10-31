@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { worldToGeo, AIRPORT_ELEVATION_M } from '../environment/phase6/geo.js';
+import { addSurfaceDetail } from '../render/visuals.js';
 
 // Real South India terrain (lat 8-19.5 N, lon 74-85 E) from assets/terrain/south_india.png
 // (built by tools/build_heightmap.py from SRTM / GMTED / ETOPO1 via Mapzen Terrain Tiles).
@@ -54,7 +55,7 @@ export class Terrain {
     this.chunks = new Map();
     this.group = new THREE.Group();
     this.group.name = 'south_india_terrain';
-    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+    this.material = addSurfaceDetail(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, envMapIntensity: 0.8 }), 'terrain');
 
     const seaGeo = new THREE.PlaneGeometry(CHUNK_M * (RING * 2 + 3), CHUNK_M * (RING * 2 + 3));
     seaGeo.rotateX(-Math.PI / 2);

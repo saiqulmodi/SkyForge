@@ -45,7 +45,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
       }
     }
   </script>
@@ -388,6 +389,25 @@
     </div>
 
     <div class="panel-box">
+      <b>TIME OF DAY</b>
+      <div class="btn-grid">
+        <button data-tod="noon" class="active" onclick="setTimeOfDay('noon')">Noon</button>
+        <button data-tod="morning" onclick="setTimeOfDay('morning')">Morning</button>
+        <button data-tod="golden" onclick="setTimeOfDay('golden')">Golden Hour</button>
+        <button data-tod="dusk" onclick="setTimeOfDay('dusk')">Dusk</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
+      <b>GRAPHICS</b>
+      <div class="btn-grid">
+        <button data-gfx="low" onclick="setGraphics('low')">Low</button>
+        <button data-gfx="medium" onclick="setGraphics('medium')">Medium</button>
+        <button data-gfx="high" onclick="setGraphics('high')">High + Bloom</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
       <b>AUTOPILOT (MCP)</b>
       <div class="btn-grid">
         <button id="btn-ap" onclick="toggleAP()">AP [Z]</button>
@@ -415,6 +435,7 @@
     import { MovingMap } from './src/nav/movingMap.js';
     import { Terrain, SEA_LEVEL_Y } from './src/world/terrain.js';
     import { Airports } from './src/world/airports.js';
+    import { createVisuals, addSurfaceDetail } from './src/render/visuals.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -583,11 +604,9 @@
     // ==========================================
     const viewport = document.getElementById('viewport');
     const renderer = new THREE.WebGLRenderer({ canvas: viewport, antialias: true, logarithmicDepthBuffer: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = true; // pixel ratio, exposure and shadow quality: src/render/visuals.js
     window.skyforgeRenderer = renderer; // console check: skyforgeRenderer.info.memory
 
     const scene = new THREE.Scene();
@@ -604,6 +623,12 @@
     sunLight.castShadow = true;
     scene.add(sunLight);
 
+    // Physical sky, haze, reflections, sun shadows that follow the aircraft, quality tiers (no clouds: clear views)
+    const visuals = await createVisuals({ renderer, scene, camera, sunLight, hemiLight });
+    window.skyforgeVisuals = visuals;
+    window.setGraphics = (tier) => visuals.setQuality(tier);
+    window.setTimeOfDay = (name) => visuals.setTime(name);
+
     // ==========================================
     // 3. TERRAIN, NANDI HILLS & RUNWAYS
     // ==========================================
@@ -611,6 +636,7 @@
     // y = 0 is VOBL field elevation (915 m AMSL); sea level is y = -915. The VOBL area is flattened.
     const terrain = await Terrain.load('./assets/terrain/south_india');
     scene.add(terrain.group);
+    visuals.attachSea(terrain.sea);
 
     // South India airports (real runways from OurAirports); each one levels its ground to field elevation
     const airports = await Airports.load('./assets/airports/south_india_airports.json');
@@ -622,14 +648,14 @@
     // VOBL Runway 09L
     const runway = new THREE.Mesh(
       new THREE.PlaneGeometry(45, 4000),
-      new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.9 })
+      addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x2b2c2e, roughness: 0.9 }), 'runway')
     );
     runway.rotation.x = -Math.PI / 2;
     runway.position.y = 0.05;
     runway.receiveShadow = true;
     scene.add(runway);
 
-    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const lineMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.75 }); // lit paint (follows time of day)
     for (let z = -1900; z < 1900; z += 50) {
       const stripe = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 30), lineMat);
       stripe.rotation.x = -Math.PI / 2;
@@ -692,6 +718,7 @@
       const airborne = aircraft !== null && !state.onGround;
       aircraft = fleet.switchTo(type);
       cockpit = fleet.cockpit;
+      visuals.enhanceAircraft(aircraft.mesh, cockpit.group);
       profile = getFlightProfile();
       currentAircraft = type;
 
@@ -848,17 +875,8 @@
     // ==========================================
     // 5. CONTROLS & AUTOPILOT
     // ==========================================
-    window.setWeather = (preset) => {
-      if (preset === 'clear') {
-        scene.background.set(0x89c2d9); scene.fog.density = 0.00003; sunLight.intensity = 1.8;
-      } else if (preset === 'monsoon') {
-        scene.background.set(0x475569); scene.fog.density = 0.00035; sunLight.intensity = 0.6;
-      } else if (preset === 'crosswind') {
-        scene.background.set(0x64748b); scene.fog.density = 0.0001; sunLight.intensity = 1.4;
-      } else if (preset === 'cat3') {
-        scene.background.set(0x94a3b8); scene.fog.density = 0.003; sunLight.intensity = 0.3;
-      }
-    };
+    // Weather presets: haze density/colour, sun strength and sky turbidity (src/render/visuals.js)
+    window.setWeather = (preset) => visuals.setWeather(preset);
 
     window.toggleAP = () => {
       if (state.onGround) return;
@@ -1358,7 +1376,8 @@
 
       const curAoA = (state.aoa || 0) * (180 / Math.PI);
       audio.update(currentAircraft, state.power, state.ias, state.isAfterburner, curAoA, state.onGround);
-      renderer.render(scene, camera);
+      visuals.update(state.pos);
+      visuals.render();
       drawAvionics();
     }
 

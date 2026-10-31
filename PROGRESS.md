@@ -18,3 +18,4 @@ World: origin = VOBL 09L/27R centre, y = 0 = 915 m AMSL; -Z east, +Z west, -X no
 ## Log
 - 2026-10-31: stage 3 started.
 - 2026-10-31: stage 3 done. 29 airports (8.7 KB JSON). runwayAt verified (VOMM 07/25, VOTV 14, VOCI 27, VOHS 09L, VOBL, VOML 24; abeam = none). Spawn VOMM 07 at field 56 ft, scenery + PAPI + crossing 12/30 visible; approach VOMM 07 / VOTV 14 with route home to the chosen runway; chase camera snaps after jumps. Browser window was throttled to ~1.6 FPS (stage-2 build identical there) - FPS not re-measured. Waiting for go on stage 4.
+- 2026-10-31: visual upgrade (src/render/visuals.js): physical sky + matching haze, sky reflections, sun shadows following the aircraft, farmland/asphalt/concrete detail, glossy sea, aircraft paint + panel lines, lit runway paint, Time of Day (Noon/Morning/Golden/Dusk) and Graphics (Low/Medium/High+Bloom) panels. No clouds (user: keep views clear). Stage 4 still waiting for go.

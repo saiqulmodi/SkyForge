@@ -1,5 +1,6 @@
 ﻿import * as THREE from 'three';
 import { geoToWorld, PLACES } from './geo.js';
+import { addSurfaceDetail, gfx } from '../../render/visuals.js';
 
 // Kempegowda International Airport (VOBL): runway 09L/27R markings, edge lights and PAPI,
 // parallel taxiway, apron, Terminal 1, Terminal 2 (garden terminal), ATC tower, hangars,
@@ -21,6 +22,7 @@ export function flatPlane(w, l, mat, x, y, z) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, l), mat);
   m.rotation.x = -Math.PI / 2;
   m.position.set(x, y, z);
+  m.receiveShadow = true;
   return m;
 }
 
@@ -37,7 +39,8 @@ export function designator(text, z, headingSign) {
   ctx.fillText(text.slice(2), 128, 470);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false });
+  tex.anisotropy = gfx.aniso;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.75 });
   const m = new THREE.Mesh(new THREE.PlaneGeometry(9, 36), mat);
   m.rotation.x = -Math.PI / 2;
   if (headingSign > 0) m.rotation.z = Math.PI; // 27R: read by aircraft flying towards +Z
@@ -123,11 +126,11 @@ export function createKempegowdaStructures(scene) {
   const group = new THREE.Group();
   group.name = 'vobl_airport';
 
-  const paint = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
-  const asphalt = new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.9 });
-  const taxiMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.9 });
-  const apronMat = new THREE.MeshStandardMaterial({ color: 0x8f8f8a, roughness: 0.85 });
-  const yellow = new THREE.MeshBasicMaterial({ color: 0xe8c000 });
+  const paint = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.75 });
+  const asphalt = addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x2b2c2e, roughness: 0.9 }), 'runway');
+  const taxiMat = addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x343538, roughness: 0.9 }), 'taxi');
+  const apronMat = addSurfaceDetail(new THREE.MeshStandardMaterial({ color: 0x9a9a94, roughness: 0.85 }), 'apron');
+  const yellow = new THREE.MeshStandardMaterial({ color: 0xe8c000, roughness: 0.75 });
   const concrete = new THREE.MeshStandardMaterial({ color: 0xd2d2cc, roughness: 0.7 });
   const glass = new THREE.MeshStandardMaterial({ color: 0x35596b, roughness: 0.15, metalness: 0.8 });
   const roofCopper = new THREE.MeshStandardMaterial({ color: 0x9a7448, roughness: 0.5 });
