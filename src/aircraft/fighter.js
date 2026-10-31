@@ -150,6 +150,7 @@ export function createFighter() {
       maxPitchRate: 1.8,
       maxYawRate: 0.5,
       vr: 110,
+      approachKt: 150,
       groundThrust: 65.0,
       liftCoeff: 0.35,
       groundHeight: 1.2,

@@ -1,19 +1,22 @@
-# SkyForge - Prompt 1: FleetManager (4 switchable aircraft)
+# SkyForge - Phase 6: real Bengaluru terrain + landmarks + runway take-off / landing
 
 STATUS: DONE
 
-User asked on 2026-10-31: "now do prompt 1 fleet manager". Prompt 2 (3D cockpit) is already committed (bfbb097).
-The page runs the inline module in index.html (src/main.js is NOT loaded). Keep the inline flight feel:
-same numbers for trainer and fighter, only moved into each aircraft's profile. Keep the 3D cockpit,
-C view toggle, glance keys 1-8, mouse-look, throttle and flight keys working. No new npm packages.
+User asked on 2026-10-31: "now do phase 6 bengaluru terrain", then "real bangalore", then
+"include landing, and take off on the runway". The page runs the inline module in index.html.
+World axes: runway 09L/27R along Z, -Z = east, +Z = west, -X = north, +X = south; origin = runway centre.
+Real placement via src/environment/phase6/geo.js (lat/lon -> metres). Keep fleet, cockpit, gamepad working.
 
-## Steps (tick each when finished and verified)
-- [x] STEP 1 - common contract: createTrainer() in trainer.js (wraps buildMilitaryTrainer), createFighter() in fighter.js returns contract (keeps look, +-22 deg fins, afterburner plume); contract = { id, name, mesh, profile, cockpitOffset, chaseOffset, update(dt, flightState), dispose() }
-- [x] STEP 2 - new src/aircraft/airliner.js (high-wing cargo, 4 turbofans, T-tail, ramp on R below 150 kt) and src/aircraft/helicopter.js (tandem cockpit, 4-blade rotor spin follows rotor RPM, tail rotor, stub-wing pylons); aero.js separate rotorcraft branch (collective lift, cyclic disc tilt, pedals yaw, stable hover)
-- [x] STEP 3 - src/aircraft/FleetManager.js: registry, switchTo(id) (airborne keeps pos/heading/speed, ground resets to 09L threshold), dispose old, push profile into aero.js, cockpit/chase offsets, keep view mode, dispatch 'aircraftchanged'
-- [x] STEP 4 - wire the 4 bottom buttons, active highlight, start on Trainer
-- [x] DONE CHECK - zero console errors, 20 swaps -> renderer.info.memory.geometries not growing, heli hovers, C works on all 4; git add . ; git commit -m "FleetManager: 4 switchable aircraft"; set STATUS: DONE
+## Steps
+- [x] geo.js - real coordinates (VOBL, Nandi Hills, Skandagiri, T1, T2, ATC, NH44 route, roads, Bengaluru CBD)
+- [x] nandiHills.js - granite massif elevation grid at the real Nandi / Skandagiri summits (~19-24 km N)
+- [x] voblAirport.js - T1, T2 concourses, ATC tower, hangars, apron, taxiways, south runway 09R/27L, runway 09L/27R markings (piano keys, numbers, TDZ, aiming points), edge lights, PAPI
+- [x] approachLights.js - MALSR stanchions past both thresholds (steady bars + sequenced flashers)
+- [x] nh44Expressway.js - NH44 + airport access + Devanahalli-Doddaballapur + Hennur-Bagalur roads with traffic; Bengaluru city + Manyata + Yelahanka AFS
+- [x] index.html - load phase 6, remove placeholder T1/ATC/Nandi bump, larger terrain, clearer haze
+- [x] landing/take-off - brakes (B key / gamepad L3), realistic rollout, touchdown rating (fpm, on/off runway, crash -> reset), approach start (key L / button) on 3 deg glide path
+- [x] DONE CHECK - no console errors, take-off and landing tested, screenshots; git commit "Phase 6: real Bengaluru terrain, VOBL airport, MALSR, NH44, runway landing"; STATUS: DONE
 
 ## Log
-- 2026-10-31: started Prompt 1; routine SkyForge_AutoContinue re-enabled.
-- 2026-10-31: done in one session. Browser: 4 aircraft swap with no console errors; 20 swaps -> geometries cycle back to 79 (no growth); heli holds ~158 ft at 71 % collective; airborne swap kept altitude; ramp opens only < 150 kt; C works on all 4. FPS 20-30 on this laptop (JS 2.7 ms/frame, GPU-bound). Committed; routine disabled.
+- 2026-10-31: Phase 6 started.
+- 2026-10-31: done. Browser: no console errors, 55-59 FPS; smooth landing 199-235 fpm rated on RWY 09L, brakes stop in ~340 m, off-runway touchdown and Nandi terrain crash + reset work. Note: flight model needs ~21 deg nose-up at approach speed (lift = pitch x speed) - asked user before changing it.

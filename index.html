@@ -342,9 +342,9 @@
   <div id="ui-overlay">
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
-    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach RWY 09L<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
-    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft
+    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach
   </div>
 
   <div id="control-deck">
@@ -362,6 +362,7 @@
         <div class="btn-grid">
           <button id="btn-cam" onclick="toggleCameraView()" class="active">VIEW: COCKPIT [C]</button>
           <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
+          <button onclick="startApproach()">APPROACH 09L [L]</button>
       </div>
     </div>
 
@@ -398,6 +399,7 @@
     import { FleetManager } from './src/aircraft/FleetManager.js';
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
     import { GamepadInput } from './src/core/gamepad.js';
+    import { initPhase6Environment } from './src/environment/phase6/index.js';
 
     // ==========================================
     // 1. PROCEDURAL AUDIO SYNTHESIZER
@@ -573,7 +575,7 @@
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x89c2d9);
-    scene.fog = new THREE.FogExp2(0x89c2d9, 0.00008);
+    scene.fog = new THREE.FogExp2(0x89c2d9, 0.00003); // clear day: Nandi Hills (~19 km) visible from the field
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 100000);
 
@@ -588,29 +590,23 @@
     // ==========================================
     // 3. TERRAIN, NANDI HILLS & RUNWAYS
     // ==========================================
-    const terrainSize = 60000;
-    const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, 64, 64);
+    // Flat Deccan plateau at field elevation (y = 0 = 915 m AMSL), 90 x 90 km so Nandi Hills (~19 km N)
+    // and Bengaluru city (~25 km SW) fit. Nandi Hills itself is the Phase 6 elevation grid.
+    const terrainSize = 90000;
+    const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, 128, 128);
     terrainGeo.rotateX(-Math.PI / 2);
     const posAttr = terrainGeo.attributes.position;
     const colors = [];
-    const colorRock = new THREE.Color(0x6e685f);
     const colorGrass = new THREE.Color(0x3e5229);
+    const colorFarm = new THREE.Color(0x6b6a3a);
+    const colorDry = new THREE.Color(0x7a6a4a);
 
     for (let i = 0; i < posAttr.count; i++) {
       const x = posAttr.getX(i);
       const z = posAttr.getZ(i);
-      let elevation = 0;
-
-      const nandiDist = Math.hypot(x - 500, z + 8500);
-      if (nandiDist < 6000) {
-        const falloff = Math.cos((nandiDist / 6000) * Math.PI * 0.5);
-        elevation = Math.pow(falloff, 2.2) * 580;
-      }
-      posAttr.setY(i, elevation);
-
-      const vertexColor = new THREE.Color();
-      if (elevation > 120) vertexColor.copy(colorRock);
-      else vertexColor.copy(colorGrass);
+      // Farmland patchwork (red-soil fields, scrub, green plots)
+      const n = Math.sin(x * 0.0011) * Math.cos(z * 0.0013) + Math.sin((x + z) * 0.0007) * 0.6;
+      const vertexColor = colorGrass.clone().lerp(n > 0.4 ? colorDry : colorFarm, Math.min(1, Math.abs(n) * 0.6));
       colors.push(vertexColor.r, vertexColor.g, vertexColor.b);
     }
     terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -638,14 +634,9 @@
       scene.add(stripe);
     }
 
-    const bldgMat = new THREE.MeshStandardMaterial({ color: 0xd9e2ec, roughness: 0.4 });
-    const t1 = new THREE.Mesh(new THREE.BoxGeometry(450, 22, 100), bldgMat);
-    t1.position.set(-420, 11, 200);
-    scene.add(t1);
-
-    const atcShaft = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 85, 12), bldgMat);
-    atcShaft.position.set(-280, 42.5, -150);
-    scene.add(atcShaft);
+    // Phase 6: real Bengaluru scenery - Nandi Hills, VOBL terminals / ATC / hangars, runway markings,
+    // PAPI, MALSR, NH44 highway grid, Bengaluru city (src/environment/phase6)
+    const phase6 = initPhase6Environment(scene);
 
     // Tracers
     const tracers = [];
@@ -676,6 +667,7 @@
       altHold: false,
       targetAlt: 3000
     };
+    window.skyforgeState = state; // console check: position, speed, throttle
 
     // FleetManager owns the 4 airframes (src/aircraft/*). Camera layers: exterior on LAYER_EXTERIOR
     // (chase only), 3D cockpit on LAYER_COCKPIT (cockpit view only); world and lights stay on layer 0.
@@ -699,19 +691,103 @@
         // Keep position, heading and speed; just keep the new airframe's gear clear of the ground
         state.pos.y = Math.max(state.pos.y, profile.groundHeight + 1);
       } else {
-        // On the ground: reset to the runway 09L threshold
-        state.pos.set(0, profile.groundHeight, 1800);
-        state.rot.set(0, 0, 0);
-        state.vel.set(0, 0, 0);
-        state.throttle = 0;
-        state.power = 0;
-        state.ias = 0;
-        state.mach = 0.0;
-        state.onGround = true;
-        state.apMaster = false;
-        state.altHold = false;
+        resetToThreshold();
       }
       updateAPReadout();
+    };
+
+    // On the ground at the runway 09L threshold, lined up for take-off
+    function resetToThreshold() {
+      state.pos.set(0, profile.groundHeight, 1800);
+      state.rot.set(0, 0, 0);
+      state.vel.set(0, 0, 0);
+      state.throttle = 0;
+      state.power = 0;
+      state.ias = 0;
+      state.mach = 0.0;
+      state.onGround = true;
+      state.apMaster = false;
+      state.altHold = false;
+      landing.airTime = 0;
+      landing.rotateCued = false;
+      landing.crashResetAt = 0;
+      landing.rollout = false;
+      updateAPReadout();
+    }
+
+    // ==========================================
+    // TAKE-OFF & LANDING
+    // ==========================================
+    const landing = { airTime: 0, rotateCued: false, crashResetAt: 0, rollout: false };
+    const GLIDE_RAD = 3 * Math.PI / 180;
+
+    const flightMsgEl = document.createElement('div');
+    flightMsgEl.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:10002;padding:8px 18px;' +
+      'font:bold 15px monospace;background:rgba(6,12,18,0.88);border:1px solid currentColor;display:none;text-align:center;';
+    document.body.appendChild(flightMsgEl);
+    function flightMsg(text, color = '#00ffcc', ms = 5000) {
+      flightMsgEl.textContent = text;
+      flightMsgEl.style.color = color;
+      flightMsgEl.style.display = 'block';
+      clearTimeout(flightMsgEl._t);
+      flightMsgEl._t = setTimeout(() => { flightMsgEl.style.display = 'none'; }, ms);
+    }
+
+    function crash(reason) {
+      if (landing.crashResetAt) return;
+      flightMsg(`CRASH: ${reason} - resetting to runway 09L`, '#ef4444', 3500);
+      landing.crashResetAt = performance.now() + 3000;
+      state.vel.set(0, 0, 0);
+      state.throttle = 0;
+      state.power = 0;
+    }
+
+    // Rates a touchdown: sink rate, attitude, and whether the wheels are on a runway
+    function onTouchdown(sinkMs) {
+      if (landing.airTime < 1.5) { landing.airTime = 0; return; } // just a skip at lift-off
+      landing.airTime = 0;
+      landing.rollout = !profile.rotorcraft;
+      const fpm = Math.round(sinkMs * 196.85);
+      const rollDeg = Math.abs(state.rot.z) * 180 / Math.PI;
+      const rwy = phase6.runwayAt(state.pos.x, state.pos.z);
+      if (profile.rotorcraft) {
+        if (fpm > 800) crash(`HARD LANDING ${fpm} FPM`);
+        else flightMsg(`LANDED - ${fpm} FPM${rwy ? ' on RWY ' + rwy : ''}`, '#4ade80');
+        return;
+      }
+      if (fpm > 900) return crash(`HARD LANDING ${fpm} FPM`);
+      if (rollDeg > 15) return crash(`WINGTIP STRIKE (${Math.round(rollDeg)} DEG BANK)`);
+      if (state.rot.x < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
+      if (!rwy && state.ias > 40) return crash('OFF-RUNWAY TOUCHDOWN');
+      const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
+      const fromThreshold = Math.round(Math.abs((state.pos.z > 0 ? phase6.runway.halfLength : -phase6.runway.halfLength) - state.pos.z));
+      flightMsg(`${grade} LANDING - ${fpm} FPM, RWY ${rwy}, ${fromThreshold} M past threshold. Brakes: B / L3`, '#4ade80', 7000);
+    }
+
+    // Puts the aircraft on a 3 degree final to runway 09L (fixed-wing 8 km out, helicopter 1.5 km)
+    window.startApproach = () => {
+      const v = profile.approachKt / 1.94384;
+      const dist = profile.rotorcraft ? 1500 : 8000;
+      const aimZ = phase6.runway.halfLength - 400; // aiming point / PAPI abeam
+      state.pos.set(0, profile.groundHeight + dist * Math.tan(GLIDE_RAD), aimZ + dist);
+      state.vel.set(0, -v * Math.sin(GLIDE_RAD), -v * Math.cos(GLIDE_RAD));
+      state.onGround = false;
+      state.apMaster = false;
+      state.altHold = false;
+      landing.airTime = 10;
+      landing.crashResetAt = 0;
+      if (profile.rotorcraft) {
+        state.rot.set(0, 0, 0);
+        state.throttle = 0.66; // slightly below hover collective: gentle descent
+        state.power = 66;
+      } else {
+        // Trim: lift balances weight at this speed, thrust balances drag
+        state.rot.set(Math.min(0.45, 9.81 / (v * profile.liftCoeff)), 0, 0);
+        state.throttle = Math.min(1, 0.0006 * v * v / profile.maxThrust);
+        state.power = state.throttle * 100;
+      }
+      updateAPReadout();
+      flightMsg(`FINAL APPROACH RWY 09L at ${profile.approachKt} KT - follow the PAPI: 2 white + 2 red = on glide path`, '#38bdf8', 7000);
     };
 
     // Highlight the active fleet button
@@ -729,7 +805,7 @@
     // ==========================================
     window.setWeather = (preset) => {
       if (preset === 'clear') {
-        scene.background.set(0x89c2d9); scene.fog.density = 0.00008; sunLight.intensity = 1.8;
+        scene.background.set(0x89c2d9); scene.fog.density = 0.00003; sunLight.intensity = 1.8;
       } else if (preset === 'monsoon') {
         scene.background.set(0x475569); scene.fog.density = 0.00035; sunLight.intensity = 0.6;
       } else if (preset === 'crosswind') {
@@ -826,6 +902,7 @@
       if (e.code === 'BracketRight') adjustTargetAlt(500);
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
+      if (e.code === 'KeyL') window.startApproach(); // 3 degree final to runway 09L
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -856,6 +933,7 @@
         else if (action === 'altUp') adjustTargetAlt(500);
         else if (action === 'altDown') adjustTargetAlt(-500);
         else if (action === 'resetHead') window.lookCockpit('center');
+        else if (action === 'approach') window.startApproach();
         else if (action === 'ramp' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias);
         else if (action === 'prevAircraft' || action === 'nextAircraft') {
           const step = action === 'nextAircraft' ? 1 : FLEET_ORDER.length - 1;
@@ -1002,8 +1080,11 @@
       state.ias = forwardSpeed * 1.94384;
       state.mach = state.ias / 661.47;
 
+      const braking = !!(keys['KeyB'] || (pad && pad.brake));
+
       if (profile.rotorcraft) {
         // Rotorcraft branch (aero.js): collective = lift, cyclic = disc tilt, pedals = yaw
+        state.prevOnGround = state.onGround;
         stepRotorcraft(state, { pitch: pIn, roll: rIn, yaw: yIn }, profile, dt);
       } else {
         // Fixed-wing: per-aircraft numbers come from the active profile
@@ -1026,23 +1107,46 @@
           if (state.rot.x < 0.0) state.rot.x = 0.0;
           state.rot.z *= 0.85;
 
-          if (state.throttle < 0.05) {
-            state.vel.z *= 0.8;
-            state.vel.x *= 0.8;
-          } else {
+          // Ground roll: rolling resistance at idle, wheel brakes (B / L3) for the landing rollout
+          const groundDecel = (state.throttle < 0.05 ? 1.2 : 0) + (braking ? 5.0 : 0);
+          const rollSpeed = Math.hypot(state.vel.x, state.vel.z);
+          if (groundDecel > 0 && rollSpeed > 0) {
+            const k = Math.max(0, rollSpeed - groundDecel * dt) / rollSpeed;
+            state.vel.x *= k;
+            state.vel.z *= k;
+          }
+          state.vel.x *= 0.9; // tyres resist sideways drift
+          if (state.throttle >= 0.05) {
             let groundThrust = (state.power / 100) * profile.groundThrust;
             state.vel.z -= groundThrust * dt;
             state.vel.z *= 0.998;
           }
 
-          if (state.ias > vr && state.rot.x > 0.05) {
+          // Landing rollout: nose wheel comes down and the aircraft stays down unless the pilot
+          // adds > 50 % power (touch-and-go). Ends once slowed to taxi speed.
+          if (landing.rollout) {
+            state.rot.x = Math.max(0, state.rot.x - 0.12 * dt);
+            if (state.ias < 30) landing.rollout = false;
+          }
+          const liftOffAllowed = !landing.rollout || state.throttle > 0.5;
+
+          if (liftOffAllowed && state.ias > vr && state.rot.x > 0.05) {
+            landing.rollout = false;
             state.onGround = false;
             state.vel.y = forwardSpeed * Math.sin(state.rot.x) + 3.0;
+            flightMsg('AIRBORNE - positive climb', '#4ade80', 2500);
           } else {
             state.vel.y = 0;
+            if (state.ias > vr && !landing.rotateCued && state.throttle >= 0.05) {
+              landing.rotateCued = true;
+              flightMsg(`VR ${vr} KT - ROTATE: pull back (S / right stick)`, '#facc15', 3000);
+            }
           }
 
-          if (!state.prevOnGround && state.ias > 40) audio.playTouchdown();
+          if (!state.prevOnGround) {
+            if (state.ias > 40) audio.playTouchdown();
+            onTouchdown(-velBefore.y);
+          }
         } else {
           state.onGround = false;
 
@@ -1070,8 +1174,22 @@
         state.vel.y = 0;
         state.onGround = true;
       }
+      if (profile.rotorcraft && !state.prevOnGround && state.onGround) onTouchdown(-velBefore.y);
 
       state.pos.add(state.vel.clone().multiplyScalar(dt));
+
+      // Take-off / landing bookkeeping, Nandi Hills terrain, crash reset
+      if (!state.onGround) landing.airTime += dt;
+      else if (state.ias < 5) landing.rotateCued = false;
+      const hillHeight = phase6.terrainHeight(state.pos.x, state.pos.z); // 0 on the plateau
+      if (hillHeight > 1 && state.pos.y - profile.groundHeight < hillHeight) crash('TERRAIN - NANDI HILLS');
+      if (landing.crashResetAt) {
+        state.vel.set(0, 0, 0);
+        state.throttle = 0;
+        if (performance.now() > landing.crashResetAt) resetToThreshold();
+      }
+      phase6.update(performance.now(), state.pos);
+
       fleetContainer.position.copy(state.pos);
       fleetContainer.rotation.copy(state.rot);
 

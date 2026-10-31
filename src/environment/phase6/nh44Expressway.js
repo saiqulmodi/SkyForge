@@ -1,55 +1,115 @@
 ﻿import * as THREE from 'three';
+import { geoToWorld, NH44_ROUTE, ROADS } from './geo.js';
+
+// Highway grid around VOBL, laid on the real routes: NH44 (Bellary Road / Airport Expressway),
+// the airport access road from the Trumpet interchange, Devanahalli-Doddaballapur (NH648)
+// and Hennur-Bagalur road. NH44 carries moving traffic in both directions.
+
+// Polyline of [lat, lon] -> world points resampled every `step` metres
+function routePoints(route, step = 150) {
+  const pts = route.map(([lat, lon]) => { const w = geoToWorld(lat, lon); return new THREE.Vector3(w.x, 0, w.z); });
+  const out = [pts[0].clone()];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const n = Math.max(1, Math.round(a.distanceTo(b) / step));
+    for (let k = 1; k <= n; k++) out.push(a.clone().lerp(b, k / n));
+  }
+  return out;
+}
+
+// Flat ribbon of `width` metres along the points, `y` above the ground
+function ribbon(points, width, y, mat) {
+  const pos = [];
+  const idx = [];
+  const side = new THREE.Vector3();
+  points.forEach((p, i) => {
+    const prev = points[Math.max(0, i - 1)], next = points[Math.min(points.length - 1, i + 1)];
+    side.set(next.z - prev.z, 0, -(next.x - prev.x)).normalize().multiplyScalar(width / 2);
+    pos.push(p.x + side.x, y, p.z + side.z, p.x - side.x, y, p.z - side.z);
+    if (i > 0) {
+      const a = (i - 1) * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, mat);
+}
+
+// Cumulative distances so traffic can be placed by distance along the road
+function measure(points) {
+  const cum = [0];
+  for (let i = 1; i < points.length; i++) cum.push(cum[i - 1] + points[i].distanceTo(points[i - 1]));
+  return cum;
+}
+
+function pointAt(points, cum, d, out, dirOut) {
+  let lo = 1, hi = cum.length - 1; // first index with cum[i] >= d
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < d) lo = mid + 1; else hi = mid;
+  }
+  const i = lo;
+  const t = (d - cum[i - 1]) / Math.max(1e-6, cum[i] - cum[i - 1]);
+  out.copy(points[i - 1]).lerp(points[i], t);
+  dirOut.copy(points[i]).sub(points[i - 1]).normalize();
+}
 
 export function createNH44Expressway(scene) {
-  const roadGroup = new THREE.Group();
-  const roadLength = 12000;
-  const roadWidth = 28;
+  const group = new THREE.Group();
+  group.name = 'highway_grid';
 
-  const deckGeo = new THREE.BoxGeometry(roadWidth, 1.2, roadLength);
-  const deckMat = new THREE.MeshStandardMaterial({ color: 0x2b2d2f, roughness: 0.9 });
-  const deck = new THREE.Mesh(deckGeo, deckMat);
-  deck.position.set(-2800, 10, -5000);
-  roadGroup.add(deck);
+  const asphalt = new THREE.MeshStandardMaterial({ color: 0x303234, roughness: 0.95, side: THREE.DoubleSide });
+  const median = new THREE.MeshStandardMaterial({ color: 0x55603a, roughness: 1, side: THREE.DoubleSide });
+  const minorMat = new THREE.MeshStandardMaterial({ color: 0x3b3d3f, roughness: 0.95, side: THREE.DoubleSide });
 
-  const pierGeo = new THREE.CylinderGeometry(1.4, 1.4, 10, 8);
-  const pierMat = new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.8 });
+  const nh44 = routePoints(NH44_ROUTE);
+  group.add(ribbon(nh44, 34, 0.25, asphalt));
+  group.add(ribbon(nh44, 3, 0.32, median));
+  group.add(ribbon(routePoints(ROADS.airportAccess), 24, 0.25, asphalt));
+  group.add(ribbon(routePoints(ROADS.devanahalliDoddaballapur), 14, 0.22, minorMat));
+  group.add(ribbon(routePoints(ROADS.hennurBagalur), 12, 0.22, minorMat));
 
-  for (let z = -roadLength / 2; z <= roadLength / 2; z += 80) {
-    const pier = new THREE.Mesh(pierGeo, pierMat);
-    pier.position.set(-2800, 5, -5000 + z);
-    roadGroup.add(pier);
+  // NH44 traffic: instanced vehicles, northbound and southbound carriageways
+  const cum = measure(nh44);
+  const length = cum[cum.length - 1];
+  const perDir = 220;
+  const total = perDir * 2;
+  const cars = new THREE.InstancedMesh(new THREE.BoxGeometry(2.0, 1.6, 4.6), new THREE.MeshStandardMaterial({ roughness: 0.5 }), total);
+  const palette = [0xf5f5f5, 0xb0b4b8, 0x1d1d1d, 0xb3261e, 0x1f4e9a, 0xe0b420, 0x2e7d32];
+  const offsets = [];
+  const speeds = [];
+  const col = new THREE.Color();
+  for (let i = 0; i < total; i++) {
+    offsets.push((i % perDir) / perDir * length + Math.random() * 120);
+    speeds.push(22 + Math.random() * 10); // 80-115 km/h
+    cars.setColorAt(i, col.setHex(palette[i % palette.length]));
   }
+  cars.instanceColor.needsUpdate = true;
+  group.add(cars);
 
-  const carCount = 120;
-  const trafficGeo = new THREE.SphereGeometry(0.4, 4, 4);
-  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0aa });
-  const tailMat = new THREE.MeshBasicMaterial({ color: 0xff1100 });
-
-  const southLanes = new THREE.InstancedMesh(trafficGeo, headMat, carCount);
-  const northLanes = new THREE.InstancedMesh(trafficGeo, tailMat, carCount);
-
+  const p = new THREE.Vector3();
+  const dir = new THREE.Vector3();
   const dummy = new THREE.Object3D();
-  const carOffsets = Array.from({ length: carCount }, () => Math.random() * roadLength);
 
-  roadGroup.add(southLanes, northLanes);
-  scene.add(roadGroup);
-
+  scene.add(group);
   return {
-    update: (timeSec) => {
-      const speed = 25;
-      for (let i = 0; i < carCount; i++) {
-        const zSouth = -5000 - roadLength / 2 + ((carOffsets[i] + timeSec * speed) % roadLength);
-        dummy.position.set(-2800 + 4 + (i % 2) * 4, 10.8, zSouth);
+    group,
+    update(timeSec) {
+      for (let i = 0; i < total; i++) {
+        const north = i >= perDir;
+        let d = (offsets[i] + timeSec * speeds[i]) % length;
+        if (!north) d = length - d; // southbound runs the other way
+        pointAt(nh44, cum, d, p, dir);
+        const lane = (north ? 1 : -1) * (5 + (i % 3) * 3.5); // three lanes each side of the median
+        dummy.position.set(p.x + dir.z * lane, 1.1, p.z - dir.x * lane);
+        dummy.rotation.set(0, Math.atan2(dir.x, dir.z) + (north ? 0 : Math.PI), 0);
         dummy.updateMatrix();
-        southLanes.setMatrixAt(i, dummy.matrix);
-
-        const zNorth = -5000 + roadLength / 2 - ((carOffsets[i] + timeSec * speed * 1.1) % roadLength);
-        dummy.position.set(-2800 - 4 - (i % 2) * 4, 10.8, zNorth);
-        dummy.updateMatrix();
-        northLanes.setMatrixAt(i, dummy.matrix);
+        cars.setMatrixAt(i, dummy.matrix);
       }
-      southLanes.instanceMatrix.needsUpdate = true;
-      northLanes.instanceMatrix.needsUpdate = true;
+      cars.instanceMatrix.needsUpdate = true;
     }
   };
 }

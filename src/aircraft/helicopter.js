@@ -141,6 +141,7 @@ export function createHelicopter() {
       horizontalDrag: 0.1,    // 1/s
       verticalDamping: 0.8,   // 1/s
       groundHeight: 1.4,
+      approachKt: 50,
       mass: 5200, pitchRate: 1.0, rollRate: 1.0, yawRate: 1.2
     },
     cockpitOffset: new THREE.Vector3(0, 0.9, -0.9), // rear (pilot) seat, raised above the gunner

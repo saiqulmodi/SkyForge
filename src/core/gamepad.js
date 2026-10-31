@@ -7,7 +7,8 @@
 //   Square / X   : autopilot                     Triangle / Y : cockpit / chase view
 //   D-pad up/down: autopilot target altitude +/- 500 ft
 //   D-pad left/right: previous / next aircraft
-//   Share / View : ALT HOLD                      Options / Menu, R3 : reset head view
+//   Share / View : ALT HOLD                      R3 : reset head view
+//   Options / Menu : start a final approach      L3 (hold) : wheel brakes
 const DEADZONE = 0.12;
 
 const BUTTON_ACTIONS = {
@@ -15,7 +16,7 @@ const BUTTON_ACTIONS = {
   2: 'autopilot',
   3: 'view',
   8: 'altHold',
-  9: 'resetHead',
+  9: 'approach',
   11: 'resetHead',
   12: 'altUp',
   13: 'altDown',
@@ -45,7 +46,7 @@ export class GamepadInput {
   }
 
   // Returns null when no pad is connected, otherwise
-  // { pitch, roll, yaw (-1..1), throttleRate (-1..1), fire (held), actions: [names pressed this frame] }
+  // { pitch, roll, yaw (-1..1), throttleRate (-1..1), fire, brake (held), actions: [names pressed this frame] }
   poll() {
     if (this.index === null || !navigator.getGamepads) return null;
     const gp = navigator.getGamepads()[this.index];
@@ -68,6 +69,7 @@ export class GamepadInput {
       yaw: Math.max(-1, Math.min(1, yawStick + yawBumpers)),
       throttleRate: Math.max(-1, Math.min(1, -axis(gp.axes[1] || 0) + b(7) - b(6))),
       fire: pressed(0),
+      brake: pressed(10),
       actions
     };
   }

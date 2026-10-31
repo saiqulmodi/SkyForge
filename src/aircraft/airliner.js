@@ -123,6 +123,7 @@ export function createAirliner() {
       maxPitchRate: 0.6,
       maxYawRate: 0.35,
       vr: 90,
+      approachKt: 135,
       groundThrust: 24.0,
       liftCoeff: 0.55,
       groundHeight: 2.2,

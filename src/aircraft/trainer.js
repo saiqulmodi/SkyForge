@@ -352,6 +352,7 @@ export function createTrainer() {
       maxPitchRate: 0.9,
       maxYawRate: 0.5,
       vr: 55,
+      approachKt: 85,
       groundThrust: 28.0,
       liftCoeff: 0.55,
       groundHeight: 1.2,
