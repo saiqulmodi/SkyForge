@@ -781,9 +781,13 @@
         state.throttle = 0.66; // slightly below hover collective: gentle descent
         state.power = 66;
       } else {
-        // Trim: lift balances weight at this speed, thrust balances drag
-        state.rot.set(Math.min(0.45, 9.81 / (v * profile.liftCoeff)), 0, 0);
-        state.throttle = Math.min(1, 0.0006 * v * v / profile.maxThrust);
+        // Trim for the 3 degree path: lift = weight at this speed, thrust = drag minus the glide's help
+        const clMax = profile.cl0 + profile.clAlpha * profile.stallAoA;
+        const cl = clMax * (profile.stallKt / profile.approachKt) ** 2;
+        const alpha = (cl - profile.cl0) / profile.clAlpha;
+        state.rot.set(alpha - GLIDE_RAD, 0, 0);
+        const drag = 0.0006 * v * v + 9.81 * cl * 0.05;
+        state.throttle = Math.max(0, Math.min(1, (drag - 9.81 * Math.sin(GLIDE_RAD)) / profile.maxThrust));
         state.power = state.throttle * 100;
       }
       updateAPReadout();
@@ -1033,6 +1037,7 @@
     // Cockpit camera / HUD helpers
     let gLoad = 1.0;
     const velBefore = new THREE.Vector3();
+    const fwdDir = new THREE.Vector3(); // horizontal nose direction
     const tmpVec = new THREE.Vector3();
     const tmpUp = new THREE.Vector3();
     const bodyVel = new THREE.Vector3();
@@ -1076,7 +1081,9 @@
         }
       }
 
-      const forwardSpeed = Math.max(0, -state.vel.z);
+      // Nose direction in the horizontal plane (heading); airspeed = velocity along it
+      fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
+      const forwardSpeed = Math.max(0, state.vel.x * fwdDir.x + state.vel.z * fwdDir.z);
       state.ias = forwardSpeed * 1.94384;
       state.mach = state.ias / 661.47;
 
@@ -1094,13 +1101,35 @@
 
         const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
         state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08) * dt;
-        state.rot.y += (yIn * profile.maxYawRate * cEff - rIn * 0.2 * cEff) * dt;
         state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3) * dt;
 
         state.prevOnGround = state.onGround;
         const groundHeight = profile.groundHeight;
+        const wheelsDown = state.pos.y <= groundHeight;
 
-        if (state.pos.y <= groundHeight) {
+        // Rudder yaws the nose; in the air, bank turns the aircraft (turn rate = g sin(bank) / v)
+        const turnRate = wheelsDown ? 0 : 9.81 * Math.sin(-state.rot.z) / Math.max(25, forwardSpeed);
+        state.rot.y += (yIn * profile.maxYawRate * cEff - turnRate) * dt;
+
+        // Velocity follows the nose: sideways slip dies out (quickly on the tyres, slower in the air)
+        fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
+        const along = state.vel.x * fwdDir.x + state.vel.z * fwdDir.z;
+        const slipKeep = Math.exp(-(wheelsDown ? 12 : 2.5) * dt);
+        state.vel.x = fwdDir.x * along + (state.vel.x - fwdDir.x * along) * slipKeep;
+        state.vel.z = fwdDir.z * along + (state.vel.z - fwdDir.z * along) * slipKeep;
+
+        // Lift from angle of attack and speed: L = g (v / Vs)^2 (CL / CLmax); stall above stallAoA
+        const gamma = Math.atan2(state.vel.y, Math.max(1, forwardSpeed)); // flight path angle
+        const alpha = state.rot.x - gamma;
+        const clMax = profile.cl0 + profile.clAlpha * profile.stallAoA;
+        let cl = alpha > profile.stallAoA ? clMax * 0.55 : profile.cl0 + profile.clAlpha * alpha;
+        cl = Math.max(-clMax, cl);
+        const vs = profile.stallKt / 1.94384;
+        const liftAccel = 9.81 * (forwardSpeed / vs) ** 2 * (cl / clMax);
+        const inducedDrag = Math.abs(liftAccel * cl) * 0.05;
+        state.aoa = alpha;
+
+        if (wheelsDown) {
           state.pos.y = groundHeight;
           state.onGround = true;
           if (state.rot.x > 0.22) state.rot.x = 0.22;
@@ -1115,10 +1144,11 @@
             state.vel.x *= k;
             state.vel.z *= k;
           }
-          state.vel.x *= 0.9; // tyres resist sideways drift
           if (state.throttle >= 0.05) {
             let groundThrust = (state.power / 100) * profile.groundThrust;
-            state.vel.z -= groundThrust * dt;
+            state.vel.x += fwdDir.x * groundThrust * dt;
+            state.vel.z += fwdDir.z * groundThrust * dt;
+            state.vel.x *= 0.998;
             state.vel.z *= 0.998;
           }
 
@@ -1130,10 +1160,11 @@
           }
           const liftOffAllowed = !landing.rollout || state.throttle > 0.5;
 
-          if (liftOffAllowed && state.ias > vr && state.rot.x > 0.05) {
+          // Lift-off once rotated past Vr and the wing lifts more than the weight
+          if (liftOffAllowed && state.ias > vr && state.rot.x > 0.05 && liftAccel > 9.81) {
             landing.rollout = false;
             state.onGround = false;
-            state.vel.y = forwardSpeed * Math.sin(state.rot.x) + 3.0;
+            state.vel.y = 0.5;
             flightMsg('AIRBORNE - positive climb', '#4ade80', 2500);
           } else {
             state.vel.y = 0;
@@ -1150,8 +1181,8 @@
         } else {
           state.onGround = false;
 
-          const liftFactor = state.rot.x * forwardSpeed * profile.liftCoeff;
-          state.vel.y += (liftFactor - 9.81) * dt;
+          // Lift acts through the wings: its vertical share shrinks with bank
+          state.vel.y += (liftAccel * Math.cos(state.rot.z) - 9.81) * dt;
           state.vel.y = Math.max(-35, Math.min(40, state.vel.y));
 
           const maxThrust = state.isAfterburner ? profile.afterburnerThrust : profile.maxThrust;
@@ -1161,10 +1192,11 @@
             waveDragCoeff = 0.0014;
           }
 
+          // Along the flight path: thrust - parasite/wave drag - induced drag - climb (g sin gamma)
           const aeroDrag = waveDragCoeff * forwardSpeed * forwardSpeed;
-          state.vel.z -= ((state.power / 100) * maxThrust - aeroDrag) * dt;
-          state.vel.x += Math.sin(state.rot.z) * forwardSpeed * 0.25 * dt;
-          state.vel.x *= 0.985;
+          const alongAccel = (state.power / 100) * maxThrust - aeroDrag - inducedDrag - 9.81 * Math.sin(gamma);
+          state.vel.x += fwdDir.x * alongAccel * dt;
+          state.vel.z += fwdDir.z * alongAccel * dt;
         }
       }
 

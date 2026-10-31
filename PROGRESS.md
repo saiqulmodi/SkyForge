@@ -1,22 +1,18 @@
-# SkyForge - Phase 6: real Bengaluru terrain + landmarks + runway take-off / landing
+# SkyForge - South India travel, STAGE 1: flight model fixes
 
 STATUS: DONE
 
-User asked on 2026-10-31: "now do phase 6 bengaluru terrain", then "real bangalore", then
-"include landing, and take off on the runway". The page runs the inline module in index.html.
-World axes: runway 09L/27R along Z, -Z = east, +Z = west, -X = north, +X = south; origin = runway centre.
-Real placement via src/environment/phase6/geo.js (lat/lon -> metres). Keep fleet, cockpit, gamepad working.
+User said "go" on 2026-10-31 for stage 1 of the South India airports plan (game must stay under 20 MB).
+Stages: 1 flight model (this) -> 2 large world + real terrain/coast -> 3 airports -> 4 route/navigation.
+Phased work: finish THIS stage only, commit, report, then wait for the user's "go".
 
-## Steps
-- [x] geo.js - real coordinates (VOBL, Nandi Hills, Skandagiri, T1, T2, ATC, NH44 route, roads, Bengaluru CBD)
-- [x] nandiHills.js - granite massif elevation grid at the real Nandi / Skandagiri summits (~19-24 km N)
-- [x] voblAirport.js - T1, T2 concourses, ATC tower, hangars, apron, taxiways, south runway 09R/27L, runway 09L/27R markings (piano keys, numbers, TDZ, aiming points), edge lights, PAPI
-- [x] approachLights.js - MALSR stanchions past both thresholds (steady bars + sequenced flashers)
-- [x] nh44Expressway.js - NH44 + airport access + Devanahalli-Doddaballapur + Hennur-Bagalur roads with traffic; Bengaluru city + Manyata + Yelahanka AFS
-- [x] index.html - load phase 6, remove placeholder T1/ATC/Nandi bump, larger terrain, clearer haze
-- [x] landing/take-off - brakes (B key / gamepad L3), realistic rollout, touchdown rating (fpm, on/off runway, crash -> reset), approach start (key L / button) on 3 deg glide path
-- [x] DONE CHECK - no console errors, take-off and landing tested, screenshots; git commit "Phase 6: real Bengaluru terrain, VOBL airport, MALSR, NH44, runway landing"; STATUS: DONE
+## Stage 1 steps
+- [x] Fixed-wing velocity follows the heading (thrust/drag along the nose direction, sideways slip decays, bank turns the aircraft: turn rate = g sin(bank) / v)
+- [x] Lift from angle of attack and speed: L = g (v/Vs)^2 (CL/CLmax), CL = cl0 + clAlpha * alpha, stall above stallAoA; climb costs speed (g sin gamma); induced drag
+- [x] Profiles: stallKt + approachKt per airframe so approach pitch is ~3-6 deg (trainer 48/62, fighter 92/135, airliner 78/101 kt); lift-off from real lift (no +12 m/s jump)
+- [x] Approach start trims to the new model; IAS = speed along the nose; helicopter IAS too
+- [x] Test: take-off, turn 90/180 deg and fly that way, approach + landing from cockpit with runway visible, no console errors; commit "Stage 1: flight model flies along heading, normal approach attitude"; STATUS: DONE
 
 ## Log
-- 2026-10-31: Phase 6 started.
-- 2026-10-31: done. Browser: no console errors, 55-59 FPS; smooth landing 199-235 fpm rated on RWY 09L, brakes stop in ~340 m, off-runway touchdown and Nandi terrain crash + reset work. Note: flight model needs ~21 deg nose-up at approach speed (lift = pitch x speed) - asked user before changing it.
+- 2026-10-31: stage 1 started.
+- 2026-10-31: stage 1 done. Tests: take-off (lift-off 72 kt, pitch 6.7), turn -> hdg 156 travelling SSE, approach trainer 4.6-4.7 deg / 62 kt / -330 fpm with runway visible in cockpit, landing SMOOTH 218 fpm 389 m past threshold, stop 75 m with brakes; fighter 4.5 deg, airliner 3.5 deg on approach; heli hover holds; no console errors. Waiting for user go for stage 2.

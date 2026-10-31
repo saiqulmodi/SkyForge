@@ -150,12 +150,12 @@ export function createFighter() {
       maxPitchRate: 1.8,
       maxYawRate: 0.5,
       vr: 110,
-      approachKt: 150,
+      stallKt: 92,     // clean stall speed (lift model)
+      approachKt: 135, // ~1.45 x stall: keeps the nose low enough to see the runway
       groundThrust: 65.0,
-      liftCoeff: 0.35,
       groundHeight: 1.2,
       mass: 13300, wingArea: 42.7, aspectRatio: 2.7, oswaldEfficiency: 0.7, cd0: 0.02, cl0: 0.1,
-      clAlpha: 3.5, stallAoA: 0.5, pitchRate: 1.8, rollRate: 3.0, yawRate: 0.5
+      clAlpha: 3.5, stallAoA: 0.35, pitchRate: 1.8, rollRate: 3.0, yawRate: 0.5
     },
     cockpitOffset: new THREE.Vector3(0, 0.62, -1.3), // pilot eye inside the canopy
     chaseOffset: new THREE.Vector3(0, 3.4, 14.0),

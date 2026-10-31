@@ -352,9 +352,9 @@ export function createTrainer() {
       maxPitchRate: 0.9,
       maxYawRate: 0.5,
       vr: 55,
-      approachKt: 85,
+      stallKt: 48,     // clean stall speed (lift model)
+      approachKt: 62,  // 1.3 x stall
       groundThrust: 28.0,
-      liftCoeff: 0.55,
       groundHeight: 1.2,
       // keys AeroEngine6DOF reads
       mass: 2250, wingArea: 16.3, aspectRatio: 7.1, oswaldEfficiency: 0.78, cd0: 0.025, cl0: 0.3,
