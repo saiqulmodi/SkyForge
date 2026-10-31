@@ -1,0 +1,1246 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skyforge - Full Unified Flight Simulator & Combat Range</title>
+  <style>
+    body, html { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #000; font-family: monospace; }
+    #viewport { width: 100%; height: 100%; display: block; }
+    #hud-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    
+    #ui-overlay {
+      position: absolute; top: 12px; left: 12px; color: #00ff66;
+      text-shadow: 0 0 4px #000; font-size: 12px; line-height: 1.5; pointer-events: none;
+    }
+    
+    #control-deck {
+      position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px;
+      max-width: 280px; pointer-events: auto;
+    }
+
+    .panel-box {
+      background: rgba(15, 23, 42, 0.92); border: 1px solid #38bdf8;
+      border-radius: 6px; padding: 10px 14px; color: #f8fafc; font-size: 11px;
+    }
+
+    .panel-box b { color: #38bdf8; font-size: 12px; display: block; margin-bottom: 5px; }
+
+    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    
+    button {
+      background: #0284c7; border: none; color: white; padding: 6px 8px;
+      border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 11px;
+      transition: background 0.15s;
+    }
+    button:hover { background: #0369a1; }
+    button.active { background: #10b981; font-weight: bold; }
+
+    #audio-banner {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 255, 100, 0.15); border: 1px solid #00ff66; color: #00ff66;
+      padding: 10px 20px; border-radius: 4px; pointer-events: auto; cursor: pointer; font-size: 13px;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+<style id="clean-sky-cockpit">
+  /* Strip all center screen clutter */
+  body > div:not(#app):not(canvas) {
+    pointer-events: none;
+  }
+  /* Dock all control cards in a slim horizontal row at the bottom edge */
+  .control-card, .glass-panel, .panel, div[style*="position: absolute"] {
+    position: static !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 4px 8px !important;
+    margin: 2px !important;
+    background: rgba(10, 16, 24, 0.75) !important;
+    border: 1px solid rgba(0, 255, 180, 0.3) !important;
+    border-radius: 4px !important;
+  }
+  /* Wrapper dock at bottom */
+  body > div:has(button) {
+    position: fixed !important;
+    bottom: 6px !important;
+    top: auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+    z-index: 10000 !important;
+    pointer-events: auto !important;
+  }
+  button {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+  }
+  /* Keep telemetry box in bottom left corner */
+  #flight-telemetry, div[style*="1023 KT"] {
+    position: fixed !important;
+    bottom: 50px !important;
+    left: 12px !important;
+    top: auto !important;
+    right: auto !important;
+    width: auto !important;
+  }
+</style>
+<style id="skyforge-dock-fix">
+  /* Force clean sky viewport */
+  body, html { margin: 0; padding: 0; overflow: hidden; }
+  
+  /* Dock all floating UI control panels into a single slim bottom toolbar */
+  .control-card, .glass-panel, .panel, div[class*="panel"], div[class*="card"] {
+    position: static !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    padding: 4px 8px !important;
+    margin: 2px 4px !important;
+    background: rgba(10, 16, 24, 0.85) !important;
+    border: 1px solid rgba(0, 255, 180, 0.3) !important;
+    border-radius: 4px !important;
+    font-size: 11px !important;
+    box-shadow: none !important;
+  }
+
+  /* Wrap all control groups along the bottom edge */
+  body > div:has(button) {
+    position: fixed !important;
+    bottom: 6px !important;
+    top: auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+    z-index: 10000 !important;
+    max-width: 98vw !important;
+    overflow-x: auto !important;
+    pointer-events: auto !important;
+  }
+
+  button {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+    height: auto !important;
+    white-space: nowrap !important;
+  }
+
+  /* Move telemetry box to the bottom-left corner */
+  div[style*="1023 KT"], #flight-telemetry, .telemetry {
+    position: fixed !important;
+    bottom: 50px !important;
+    left: 12px !important;
+    top: auto !important;
+    right: auto !important;
+    width: auto !important;
+    z-index: 9999 !important;
+  }
+</style>
+<style>
+  /* Wipe out top-left simulator text banner completely */
+  body > div:first-child, #overlay, #help, #instructions, .instructions,
+  div[style*="position: absolute"][style*="left: 10px"],
+  div[style*="color: #00ff88"], div[style*="color: rgb(0, 255, 136)"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+</style>
+<style id="skyforge-bottom-dashboard">
+  /* 1. Clear out center/side clutter so the sky and runway remain 100% unobstructed */
+  body, html {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  /* 2. Format Telemetry (KT, FT, PWR, MACH, PITCH) into the Top Row (Row 1) */
+  #flight-telemetry, div:has(> #hud), [class*="telemetry"], div[style*="KT"], div[style*="FT"] {
+    position: fixed !important;
+    bottom: 42px !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100vw !important;
+    height: 34px !important;
+    margin: 0 !important;
+    padding: 0 16px !important;
+    box-sizing: border-box !important;
+    background: rgba(8, 14, 22, 0.85) !important;
+    backdrop-filter: blur(8px) !important;
+    border-top: 1px solid rgba(0, 255, 170, 0.35) !important;
+    border-bottom: 1px solid rgba(0, 255, 170, 0.15) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-around !important;
+    z-index: 10001 !important;
+    font-family: 'Consolas', monospace !important;
+    font-size: 13px !important;
+    font-weight: bold !important;
+    color: #00ffcc !important;
+    text-shadow: 0 0 6px rgba(0, 255, 204, 0.6) !important;
+  }
+
+  /* Force telemetry inner elements to lay horizontally across the row */
+  #flight-telemetry > *, div[style*="KT"] > * {
+    display: inline-flex !important;
+    margin: 0 12px !important;
+  }
+
+  /* 3. Format Controls & Buttons into the Bottom Row (Row 2) spanning full width */
+  body > div:has(button) {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    width: 100vw !important;
+    height: 42px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    box-sizing: border-box !important;
+    background: rgba(4, 8, 14, 0.92) !important;
+    backdrop-filter: blur(10px) !important;
+    border-top: 1px solid rgba(0, 255, 170, 0.2) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    z-index: 10002 !important;
+    overflow-x: auto !important;
+  }
+
+  /* Compact modern cards inside row 2 */
+  .control-card, .glass-panel, .panel, [class*="panel"], [class*="card"] {
+    position: static !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 6px !important;
+    padding: 0 !important;
+    gap: 4px !important;
+  }
+
+  .control-card > span, .glass-panel > span {
+    font-size: 11px !important;
+    color: #6699aa !important;
+    margin-right: 4px !important;
+  }
+
+  button {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+    height: 26px !important;
+    border-radius: 3px !important;
+    white-space: nowrap !important;
+  }
+</style>
+<style id="skyforge-edge-dashboard">
+  body, html { margin: 0; padding: 0; overflow: hidden; }
+
+  /* ROW 1: Stretch all telemetry numbers horizontally across the entire width */
+  div:has(> div:contains("KT")), div[style*="771 KT"], div[style*="KT"], #flight-telemetry {
+    position: fixed !important;
+    bottom: 42px !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100vw !important;
+    height: 38px !important;
+    margin: 0 !important;
+    padding: 0 20px !important;
+    box-sizing: border-box !important;
+    background: rgba(8, 14, 22, 0.90) !important;
+    border-top: 1px solid #00ffaa !important;
+    border-bottom: 1px solid rgba(0, 255, 170, 0.2) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-around !important;
+    font-family: monospace !important;
+    font-size: 13px !important;
+    font-weight: bold !important;
+    color: #00ffcc !important;
+    z-index: 10001 !important;
+    box-shadow: 0 -2px 10px rgba(0, 255, 170, 0.15) !important;
+  }
+
+  /* Force vertical child lines (PWR, M, PITCH) into horizontal display */
+  div:has(> div:contains("KT")) > div, div[style*="771 KT"] > div, #flight-telemetry > div {
+    display: inline-flex !important;
+    margin: 0 10px !important;
+  }
+
+  /* ROW 2: All buttons stretching edge-to-edge at the very bottom */
+  body > div:has(button) {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    width: 100vw !important;
+    height: 42px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    box-sizing: border-box !important;
+    background: rgba(4, 8, 14, 0.96) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    z-index: 10002 !important;
+    overflow-x: auto !important;
+  }
+
+  .control-card, .glass-panel, .panel, div[class*="panel"], div[class*="card"] {
+    position: static !important;
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 4px !important;
+    padding: 0 !important;
+  }
+
+  button {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+    height: 26px !important;
+    border-radius: 4px !important;
+    white-space: nowrap !important;
+  }
+</style>
+<style id="clean-overlay-patch">
+  #overlay, #help, #hud-text, .debug-info, .intro-overlay {
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+</style>
+</head>
+<body>
+  <div id="ui-overlay">
+    <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
+    Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down<br>
+    Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)
+  </div>
+
+  <div id="control-deck">
+    <div class="panel-box">
+      <b>AIRCRAFT FLEET</b>
+      <div class="btn-grid">
+        <button id="btn-trainer" onclick="selectAircraft('trainer')">Trainer</button>
+        <button id="btn-airliner" onclick="selectAircraft('airliner')">Airliner</button>
+        <button id="btn-fighter" class="active" onclick="selectAircraft('fighter')">Fighter</button>
+        <button id="btn-heli" onclick="selectAircraft('heli')">Helicopter</button>
+        </div>
+      </div>
+      <div class="panel-box">
+        <b>CAMERA & VIEW</b>
+        <div class="btn-grid">
+          <button id="btn-cam" onclick="toggleCameraView()" class="active">VIEW: COCKPIT [C]</button>
+          <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
+      <b>METEOROLOGICAL PRESETS</b>
+      <div class="btn-grid">
+        <button onclick="setWeather('clear')">Clear Sky</button>
+        <button onclick="setWeather('monsoon')">Monsoon BLR</button>
+        <button onclick="setWeather('crosswind')">28kt X-Wind</button>
+        <button onclick="setWeather('cat3')">CAT III Fog</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
+      <b>AUTOPILOT (MCP)</b>
+      <div class="btn-grid">
+        <button id="btn-ap" onclick="toggleAP()">AP [Z]</button>
+        <button id="btn-alt" onclick="toggleAltHold()">ALT HOLD [X]</button>
+      </div>
+      <div class="btn-grid" style="margin-top: 4px;">
+        <button onclick="adjustTargetAlt(-500)">▼ -500 FT</button>
+        <button onclick="adjustTargetAlt(500)">▲ +500 FT</button>
+      </div>
+      <div id="ap-readout" style="margin-top:6px; color:#38bdf8;">STATUS: AP OFF | TGT: NONE</div>
+    </div>
+  </div>
+
+  <div id="audio-banner" onclick="initAudio()">CLICK TO ACTIVATE PROCEDURAL AUDIO ENGINE</div>
+  <canvas id="viewport"></canvas>
+  <canvas id="hud-canvas"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { buildCockpit } from './src/aircraft/cockpitInterior.js';
+
+    // ==========================================
+    // 1. PROCEDURAL AUDIO SYNTHESIZER
+    // ==========================================
+    class ProceduralAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.initialized = false;
+      }
+
+      init() {
+        if (this.initialized) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioCtx();
+
+        this.masterCompressor = this.ctx.createDynamicsCompressor();
+        this.masterCompressor.threshold.setValueAtTime(-6, this.ctx.currentTime);
+        this.masterCompressor.connect(this.ctx.destination);
+
+        this.propOsc = this.ctx.createOscillator();
+        this.propGain = this.ctx.createGain();
+        this.propFilter = this.ctx.createBiquadFilter();
+        this.propOsc.type = 'sawtooth';
+        this.propFilter.type = 'lowpass';
+        this.propFilter.frequency.setValueAtTime(350, this.ctx.currentTime);
+        this.propOsc.connect(this.propFilter);
+        this.propFilter.connect(this.propGain);
+        this.propGain.connect(this.masterCompressor);
+        this.propGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+        this.propOsc.start();
+
+        this.jetOsc = this.ctx.createOscillator();
+        this.jetGain = this.ctx.createGain();
+        this.jetOsc.type = 'sine';
+        this.jetOsc.frequency.setValueAtTime(600, this.ctx.currentTime);
+        this.jetGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+        this.jetOsc.connect(this.jetGain);
+        this.jetGain.connect(this.masterCompressor);
+        this.jetOsc.start();
+
+        const bufferSize = this.ctx.sampleRate * 2;
+        const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+        this.noiseSource = this.ctx.createBufferSource();
+        this.noiseSource.buffer = noiseBuffer;
+        this.noiseSource.loop = true;
+
+        this.noiseFilter = this.ctx.createBiquadFilter();
+        this.noiseFilter.type = 'bandpass';
+        this.noiseFilter.frequency.setValueAtTime(400, this.ctx.currentTime);
+        this.noiseFilter.Q.setValueAtTime(1.2, this.ctx.currentTime);
+
+        this.noiseGain = this.ctx.createGain();
+        this.noiseGain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+
+        this.noiseSource.connect(this.noiseFilter);
+        this.noiseFilter.connect(this.noiseGain);
+        this.noiseGain.connect(this.masterCompressor);
+        this.noiseSource.start();
+
+        this.stallOsc1 = this.ctx.createOscillator();
+        this.stallOsc2 = this.ctx.createOscillator();
+        this.stallGain = this.ctx.createGain();
+        this.stallOsc1.type = 'square';
+        this.stallOsc2.type = 'square';
+        this.stallOsc1.frequency.setValueAtTime(700, this.ctx.currentTime);
+        this.stallOsc2.frequency.setValueAtTime(720, this.ctx.currentTime);
+        this.stallGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+        this.stallOsc1.connect(this.stallGain);
+        this.stallOsc2.connect(this.stallGain);
+        this.stallGain.connect(this.masterCompressor);
+        this.stallOsc1.start();
+        this.stallOsc2.start();
+
+        this.lastWoW = true;
+        this.cannonBuffer = noiseBuffer;
+        this.initialized = true;
+        const banner = document.getElementById('audio-banner');
+        if (banner) banner.style.display = 'none';
+      }
+
+      update(type, powerPercent, speedKts, isAfterburner, aoaDeg = 0, onGround = true) {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+
+        // Stall Warning Horn buzzer
+        const isStall = !onGround && aoaDeg >= 14.0 && speedKts > 30;
+        if (this.stallGain) {
+          this.stallGain.gain.setTargetAtTime(isStall ? 0.28 : 0.0, this.ctx.currentTime, 0.03);
+        }
+
+        // Automatic Touchdown Screech on ground contact
+        if (!this.lastWoW && onGround && speedKts > 35) {
+          this.playTouchdown();
+        }
+        this.lastWoW = onGround;
+        if (!this.initialized || this.ctx.state !== 'running') return;
+
+        if (type === 'fighter') {
+          this.propGain.gain.setTargetAtTime(0.0, this.ctx.currentTime, 0.05);
+          this.jetGain.gain.setTargetAtTime(0.12 + (powerPercent / 100) * 0.15, this.ctx.currentTime, 0.05);
+          const freq = 600 + (powerPercent / 100) * 1900;
+          this.jetOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.05);
+
+          const afterburnerBoost = isAfterburner ? 0.35 : 0.05;
+          this.noiseGain.gain.setTargetAtTime(0.1 + afterburnerBoost + (speedKts / 1500) * 0.25, this.ctx.currentTime, 0.1);
+          this.noiseFilter.frequency.setTargetAtTime(isAfterburner ? 700 : 350, this.ctx.currentTime, 0.1);
+        } else if (type === 'trainer') {
+          this.propGain.gain.setTargetAtTime(0.15, this.ctx.currentTime, 0.05);
+          this.jetGain.gain.setTargetAtTime(0.0, this.ctx.currentTime, 0.05);
+          const freq = 45 + (powerPercent / 100) * 80;
+          this.propOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.05);
+        } else if (type === 'airliner') {
+          this.propGain.gain.setTargetAtTime(0.02, this.ctx.currentTime, 0.05);
+          this.jetGain.gain.setTargetAtTime(0.08 + (powerPercent / 100) * 0.12, this.ctx.currentTime, 0.05);
+          this.jetOsc.frequency.setTargetAtTime(500 + (powerPercent / 100) * 1500, this.ctx.currentTime, 0.05);
+        } else if (type === 'heli') {
+          this.propGain.gain.setTargetAtTime(0.18, this.ctx.currentTime, 0.05);
+          this.jetGain.gain.setTargetAtTime(0.02, this.ctx.currentTime, 0.05);
+        }
+      }
+
+      playCannon() {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        const source = this.ctx.createBufferSource();
+        source.buffer = this.cannonBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(650, this.ctx.currentTime);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterCompressor);
+        source.start();
+        source.stop(this.ctx.currentTime + 0.1);
+      }
+
+      playTouchdown() {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(500, this.ctx.currentTime + 0.35);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4);
+        osc.connect(gain);
+        gain.connect(this.masterCompressor);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.4);
+      }
+    }
+
+    const audio = new ProceduralAudioEngine();
+    window.initAudio = () => audio.init();
+    window.addEventListener('keydown', () => audio.init(), { once: true });
+    window.addEventListener('pointerdown', () => audio.init(), { once: true });
+
+    // ==========================================
+    // 2. THREE.JS VIEWPORT & RENDERING PIPELINE
+    // ==========================================
+    const viewport = document.getElementById('viewport');
+    const renderer = new THREE.WebGLRenderer({ canvas: viewport, antialias: true, logarithmicDepthBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = true;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x89c2d9);
+    scene.fog = new THREE.FogExp2(0x89c2d9, 0.00008);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.05, 100000);
+
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444f44, 0.75);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfffaea, 1.8);
+    sunLight.position.set(2500, 3500, 1500);
+    sunLight.castShadow = true;
+    scene.add(sunLight);
+
+    // ==========================================
+    // 3. TERRAIN, NANDI HILLS & RUNWAYS
+    // ==========================================
+    const terrainSize = 60000;
+    const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, 64, 64);
+    terrainGeo.rotateX(-Math.PI / 2);
+    const posAttr = terrainGeo.attributes.position;
+    const colors = [];
+    const colorRock = new THREE.Color(0x6e685f);
+    const colorGrass = new THREE.Color(0x3e5229);
+
+    for (let i = 0; i < posAttr.count; i++) {
+      const x = posAttr.getX(i);
+      const z = posAttr.getZ(i);
+      let elevation = 0;
+
+      const nandiDist = Math.hypot(x - 500, z + 8500);
+      if (nandiDist < 6000) {
+        const falloff = Math.cos((nandiDist / 6000) * Math.PI * 0.5);
+        elevation = Math.pow(falloff, 2.2) * 580;
+      }
+      posAttr.setY(i, elevation);
+
+      const vertexColor = new THREE.Color();
+      if (elevation > 120) vertexColor.copy(colorRock);
+      else vertexColor.copy(colorGrass);
+      colors.push(vertexColor.r, vertexColor.g, vertexColor.b);
+    }
+    terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    terrainGeo.computeVertexNormals();
+
+    const terrainMesh = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
+    terrainMesh.receiveShadow = true;
+    scene.add(terrainMesh);
+
+    // VOBL Runway 09L
+    const runway = new THREE.Mesh(
+      new THREE.PlaneGeometry(45, 4000),
+      new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.9 })
+    );
+    runway.rotation.x = -Math.PI / 2;
+    runway.position.y = 0.05;
+    runway.receiveShadow = true;
+    scene.add(runway);
+
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (let z = -1900; z < 1900; z += 50) {
+      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 30), lineMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(0, 0.08, z);
+      scene.add(stripe);
+    }
+
+    const bldgMat = new THREE.MeshStandardMaterial({ color: 0xd9e2ec, roughness: 0.4 });
+    const t1 = new THREE.Mesh(new THREE.BoxGeometry(450, 22, 100), bldgMat);
+    t1.position.set(-420, 11, 200);
+    scene.add(t1);
+
+    const atcShaft = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 85, 12), bldgMat);
+    atcShaft.position.set(-280, 42.5, -150);
+    scene.add(atcShaft);
+
+    // Tracers
+    const tracers = [];
+    const tracerGeo = new THREE.CylinderGeometry(0.12, 0.12, 5.0, 6);
+    tracerGeo.rotateX(Math.PI / 2);
+    const tracerMat = new THREE.MeshBasicMaterial({ color: 0xfde047 });
+
+    // ==========================================
+    // 4. FLEET DEFINITIONS
+    // ==========================================
+    const fleetContainer = new THREE.Group();
+    scene.add(fleetContainer);
+
+    const state = {
+      pos: fleetContainer.position,
+      vel: new THREE.Vector3(0, 0, 0),
+      rot: new THREE.Euler(0, 0, 0, 'YXZ'),
+      throttle: 0.0,
+      power: 0.0,
+      ias: 0,
+      mach: 0.0,
+      flaps: 0,
+      reversers: false,
+      isAfterburner: false,
+      onGround: true,
+      prevOnGround: true,
+      apMaster: false,
+      altHold: false,
+      targetAlt: 3000
+    };
+
+    // Control surface hinged at its leading edge (x, y, z); the surface extends aft (+Z)
+    function addSurface(model, mat, w, h, d, x, y, z) {
+      const pivot = new THREE.Group();
+      pivot.position.set(x, y, z);
+      const surface = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      surface.position.z = d / 2;
+      pivot.add(surface);
+      model.add(pivot);
+      return pivot;
+    }
+
+    function buildFleet() {
+      // 1. Trainer
+      const trainer = new THREE.Group();
+      const fusGeo = new THREE.CylinderGeometry(0.35, 0.7, 7.5, 16);
+      fusGeo.rotateX(Math.PI / 2);
+      trainer.add(new THREE.Mesh(fusGeo, new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3 })));
+      const trWings = new THREE.Mesh(new THREE.BoxGeometry(11.0, 0.15, 1.6), new THREE.MeshStandardMaterial({ color: 0x0284c7 }));
+      trWings.position.set(0, 0.45, -0.4);
+      trainer.add(trWings);
+      const trTail = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.08, 0.9), trWings.material);
+      trTail.position.set(0, 0.2, 3.2);
+      trainer.add(trTail);
+      const trVFin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.3, 1.1), trWings.material);
+      trVFin.position.set(0, 0.85, 3.2);
+      trainer.add(trVFin);
+      trainer.userData.surfaces = {
+        aileronL: addSurface(trainer, trWings.material, 2.6, 0.1, 0.35, -3.8, 0.45, 0.4),
+        aileronR: addSurface(trainer, trWings.material, 2.6, 0.1, 0.35, 3.8, 0.45, 0.4),
+        elevator: addSurface(trainer, trWings.material, 3.4, 0.06, 0.3, 0, 0.2, 3.65),
+        rudder: addSurface(trainer, trWings.material, 0.06, 1.2, 0.3, 0, 0.85, 3.75)
+      };
+
+      // 2. Airliner
+      const airliner = new THREE.Group();
+      const airFus = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 36, 24), new THREE.MeshStandardMaterial({ color: 0xf1f5f9 }));
+      airFus.geometry.rotateX(Math.PI / 2);
+      airliner.add(airFus);
+      const airNose = new THREE.Mesh(new THREE.ConeGeometry(1.9, 5.5, 24), airFus.material);
+      airNose.geometry.rotateX(-Math.PI / 2);
+      airNose.position.set(0, 0, -20.75);
+      airliner.add(airNose);
+      const airWings = new THREE.Mesh(new THREE.BoxGeometry(34.0, 0.35, 4.5), new THREE.MeshStandardMaterial({ color: 0x94a3b8 }));
+      airWings.position.set(0, 0.2, 2.0);
+      airliner.add(airWings);
+      airliner.userData.surfaces = {
+        aileronL: addSurface(airliner, airWings.material, 5.0, 0.25, 0.7, -13.0, 0.2, 4.25),
+        aileronR: addSurface(airliner, airWings.material, 5.0, 0.25, 0.7, 13.0, 0.2, 4.25)
+      };
+
+      // 3. Multirole Supersonic Fighter with Afterburner Nozzles
+      const fighter = new THREE.Group();
+      const fFus = new THREE.Mesh(new THREE.ConeGeometry(1.1, 16.0, 16), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.2 }));
+      fFus.geometry.rotateX(-Math.PI / 2);
+      fighter.add(fFus);
+      const fWings = new THREE.Mesh(new THREE.BoxGeometry(11.0, 0.12, 6.5), fFus.material);
+      fWings.position.set(0, 0, 1.2);
+      fighter.add(fWings);
+      const fCanopy = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 16), new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.1, metalness: 0.9 }));
+      fCanopy.scale.set(0.6, 0.5, 2.0);
+      fCanopy.position.set(0, 0.7, -2.5);
+      fighter.add(fCanopy);
+
+      fighter.userData.surfaces = {
+        elevonL: addSurface(fighter, fFus.material, 3.0, 0.08, 0.6, -3.2, 0, 4.45),
+        elevonR: addSurface(fighter, fFus.material, 3.0, 0.08, 0.6, 3.2, 0, 4.45)
+      };
+
+      // Additive, un-tonemapped flame so the afterburner glows
+      const flameMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+      });
+      const flameGeo = new THREE.ConeGeometry(0.45, 3.5, 12);
+      flameGeo.rotateX(Math.PI / 2);
+      const abFlame1 = new THREE.Mesh(flameGeo, flameMat);
+      abFlame1.position.set(0.55, 0, 9.2);
+      abFlame1.name = "flame1";
+      fighter.add(abFlame1);
+      const abFlame2 = new THREE.Mesh(flameGeo, flameMat);
+      abFlame2.position.set(-0.55, 0, 9.2);
+      abFlame2.name = "flame2";
+      fighter.add(abFlame2);
+
+      // 4. Helicopter
+      const heli = new THREE.Group();
+      const hPod = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 16), new THREE.MeshStandardMaterial({ color: 0x059669 }));
+      hPod.scale.set(0.9, 1.0, 1.8);
+      heli.add(hPod);
+      const hBoom = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 6.0, 12), hPod.material);
+      hBoom.geometry.rotateX(Math.PI / 2);
+      hBoom.position.set(0, 0.3, 3.8);
+      heli.add(hBoom);
+      const hRotor = new THREE.Mesh(new THREE.CylinderGeometry(5.8, 5.8, 0.02, 16), new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.45 }));
+      hRotor.position.set(0, 1.8, 0);
+      heli.add(hRotor);
+
+      return { trainer, airliner, fighter, heli };
+    }
+
+    const models = buildFleet();
+    let currentAircraft = 'fighter';
+
+    // 3D cockpit per airframe, child of its mesh. Camera layers: exterior on LAYER_EXTERIOR (chase only),
+    // cockpit on LAYER_COCKPIT (cockpit view only); world and lights stay on layer 0.
+    const LAYER_COCKPIT = 1;
+    const LAYER_EXTERIOR = 2;
+    const cockpits = {};
+    Object.keys(models).forEach((id) => {
+      models[id].traverse((o) => o.layers.set(LAYER_EXTERIOR));
+      const cp = buildCockpit(id);
+      cp.group.traverse((o) => o.layers.set(LAYER_COCKPIT));
+      models[id].add(cp.group);
+      cockpits[id] = cp;
+    });
+    const CHASE_OFFSETS = {
+      trainer: new THREE.Vector3(0, 3.4, 13.0),
+      fighter: new THREE.Vector3(0, 3.4, 14.0),
+      airliner: new THREE.Vector3(0, 9.0, 48.0),
+      heli: new THREE.Vector3(0, 4.5, 17.0)
+    };
+
+    window.selectAircraft = (type) => {
+      currentAircraft = type;
+      while (fleetContainer.children.length > 0) fleetContainer.remove(fleetContainer.children[0]);
+      fleetContainer.add(models[type]);
+
+      ['trainer', 'airliner', 'fighter', 'heli'].forEach(id => {
+        const btn = document.getElementById(`btn-${id}`);
+        if (btn) btn.classList.toggle('active', id === type);
+      });
+
+      const groundY = type === 'airliner' ? 2.2 : (type === 'heli' ? 1.4 : 1.2);
+      state.pos.set(0, groundY, 1800);
+      state.rot.set(0, 0, 0);
+      state.vel.set(0, 0, 0);
+      state.throttle = 0;
+      state.power = 0;
+      state.ias = 0;
+      state.mach = 0.0;
+      state.onGround = true;
+      state.apMaster = false;
+      state.altHold = false;
+      cockpits[type].reset();
+      updateAPReadout();
+    };
+
+    selectAircraft('fighter');
+
+    // ==========================================
+    // 5. CONTROLS & AUTOPILOT
+    // ==========================================
+    window.setWeather = (preset) => {
+      if (preset === 'clear') {
+        scene.background.set(0x89c2d9); scene.fog.density = 0.00008; sunLight.intensity = 1.8;
+      } else if (preset === 'monsoon') {
+        scene.background.set(0x475569); scene.fog.density = 0.00035; sunLight.intensity = 0.6;
+      } else if (preset === 'crosswind') {
+        scene.background.set(0x64748b); scene.fog.density = 0.0001; sunLight.intensity = 1.4;
+      } else if (preset === 'cat3') {
+        scene.background.set(0x94a3b8); scene.fog.density = 0.003; sunLight.intensity = 0.3;
+      }
+    };
+
+    window.toggleAP = () => {
+      if (state.onGround) return;
+      state.apMaster = !state.apMaster;
+      if (state.apMaster && !state.altHold) toggleAltHold();
+      updateAPReadout();
+    };
+
+    window.toggleAltHold = () => {
+      if (state.onGround) return;
+      state.altHold = !state.altHold;
+      if (state.altHold) {
+        state.targetAlt = Math.max(500, Math.round((state.pos.y * 3.28084) / 100) * 100);
+      }
+      updateAPReadout();
+    };
+
+    window.adjustTargetAlt = (deltaFt) => {
+      state.targetAlt = Math.max(500, state.targetAlt + deltaFt);
+      updateAPReadout();
+    };
+
+    function updateAPReadout() {
+      const btnAp = document.getElementById('btn-ap');
+      const btnAlt = document.getElementById('btn-alt');
+      if (btnAp) btnAp.classList.toggle('active', state.apMaster);
+      if (btnAlt) btnAlt.classList.toggle('active', state.altHold);
+      const tgtStr = state.altHold ? `${state.targetAlt} FT` : 'OFF';
+      document.getElementById('ap-readout').innerText = `STATUS: ${state.apMaster ? 'AP ON' : 'AP OFF'} | TGT: ${tgtStr}`;
+    }
+
+    const keys = {};
+    let cameraMode = 'cockpit'; // 'cockpit' or 'chase'
+    let headYaw = 0;   // Pilot glance horizontal
+    let headPitch = 0; // Pilot glance vertical
+
+    window.toggleCameraView = () => {
+      cameraMode = cameraMode === 'chase' ? 'cockpit' : 'chase';
+      const btn = document.getElementById('btn-cam');
+      if (btn) btn.innerText = cameraMode === 'cockpit' ? 'VIEW: COCKPIT [C]' : 'VIEW: CHASE [C]';
+    };
+
+    window.lookCockpit = (dir) => {
+      if (dir === 'left') { headYaw = Math.PI / 2; headPitch = 0; }
+      else if (dir === 'right') { headYaw = -Math.PI / 2; headPitch = 0; }
+      else if (dir === 'left45') { headYaw = Math.PI / 4; headPitch = 0.05; }
+      else if (dir === 'right45') { headYaw = -Math.PI / 4; headPitch = 0.05; }
+      else if (dir === 'down') { headYaw = 0; headPitch = -0.45; }
+      else if (dir === 'up') { headYaw = 0; headPitch = 0.75; }
+      else { headYaw = 0; headPitch = 0; }
+    };
+
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 2) {
+        document.body.requestPointerLock?.();
+      }
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement && cameraMode === 'cockpit') {
+        headYaw -= e.movementX * 0.003;
+        headPitch = Math.max(-0.8, Math.min(1.2, headPitch - e.movementY * 0.003));
+      }
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2 && document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyC') {
+        window.toggleCameraView();
+      }
+      if (cameraMode === 'cockpit') {
+        if (e.code === 'Digit1' || e.code === 'Numpad1') window.lookCockpit('left45');
+        if (e.code === 'Digit2' || e.code === 'Numpad2') window.lookCockpit('down');
+        if (e.code === 'Digit3' || e.code === 'Numpad3') window.lookCockpit('right45');
+        if (e.code === 'Digit4' || e.code === 'Numpad4') window.lookCockpit('left');
+        if (e.code === 'Digit5' || e.code === 'Numpad5') window.lookCockpit('center');
+        if (e.code === 'Digit6' || e.code === 'Numpad6') window.lookCockpit('right');
+        if (e.code === 'Digit8' || e.code === 'Numpad8') window.lookCockpit('up');
+      }
+      keys[e.code] = true;
+      if (e.code === 'KeyZ') toggleAP();
+      if (e.code === 'KeyX') toggleAltHold();
+      if (e.code === 'BracketLeft') adjustTargetAlt(-500);
+      if (e.code === 'BracketRight') adjustTargetAlt(500);
+      if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
+    });
+    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    function fireTracer() {
+      const tracer = new THREE.Mesh(tracerGeo, tracerMat);
+      tracer.position.copy(state.pos).add(new THREE.Vector3(0, 0, -8).applyEuler(state.rot));
+      tracer.rotation.copy(state.rot);
+      tracer.velocity = new THREE.Vector3(0, 0, -1200).applyEuler(state.rot);
+      scene.add(tracer);
+      tracers.push(tracer);
+      audio.playCannon();
+    }
+
+    // ==========================================
+    // 6. AVIONICS HUD WITH MACH & STAGE 2 AB
+    // ==========================================
+    const hudCanvas = document.getElementById('hud-canvas');
+    const ctx = hudCanvas.getContext('2d');
+
+    function resize() {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      hudCanvas.width = window.innerWidth;
+      hudCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function drawAvionics() {
+      ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+      if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
+      const cx = 120;
+      const cy = hudCanvas.height - 120;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+      ctx.fillRect(cx - 95, cy - 85, 190, 170);
+      ctx.strokeStyle = state.isAfterburner ? '#f59e0b' : '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - 95, cy - 85, 190, 170);
+
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(`${Math.round(state.ias)} KT`, cx - 80, cy - 55);
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${Math.max(0, Math.round(state.pos.y * 3.28084))} FT`, cx + 80, cy - 55);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = state.isAfterburner ? '#f59e0b' : '#f8fafc';
+      ctx.font = 'bold 12px monospace';
+      ctx.fillText(state.isAfterburner ? 'PWR: STAGE 2 AB' : `PWR: ${Math.round(state.power)}%`, cx - 80, cy + 32);
+
+      ctx.fillStyle = state.mach >= 1.0 ? '#ef4444' : '#38bdf8';
+      ctx.fillText(`M: ${state.mach.toFixed(2)} MACH`, cx - 80, cy + 50);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '11px monospace';
+      ctx.fillText(`PITCH: ${(state.rot.x * 180 / Math.PI).toFixed(1)}°`, cx - 80, cy + 68);
+
+      if (currentAircraft === 'fighter') {
+        const mx = hudCanvas.width / 2;
+        const my = hudCanvas.height / 2;
+        ctx.strokeStyle = state.mach >= 1.0 ? '#ef4444' : '#10b981';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(mx, my, 18, 0, Math.PI * 2);
+        ctx.moveTo(mx - 30, my); ctx.lineTo(mx - 18, my);
+        ctx.moveTo(mx + 18, my); ctx.lineTo(mx + 30, my);
+        ctx.moveTo(mx, my - 30); ctx.lineTo(mx, my - 18);
+        ctx.moveTo(mx, my + 18); ctx.lineTo(mx, my + 30);
+        ctx.stroke();
+
+        ctx.fillStyle = '#10b981';
+        ctx.font = '12px monospace';
+        ctx.fillText(`MACH ${state.mach.toFixed(2)} | 9.0G FBW`, mx - 60, my + 50);
+      }
+    }
+
+    // ==========================================
+    // 7. SUPERSONIC AERODYNAMICS LOOP
+    // ==========================================
+    const dt = 1 / 60;
+
+    // Cockpit camera / HUD helpers
+    let gLoad = 1.0;
+    const velBefore = new THREE.Vector3();
+    const tmpVec = new THREE.Vector3();
+    const tmpUp = new THREE.Vector3();
+    const bodyVel = new THREE.Vector3();
+    const bodyQuat = new THREE.Quaternion();
+    const headQuat = new THREE.Quaternion();
+    const headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    const eyeLocal = new THREE.Vector3();
+    const headShake = { x: 0, y: 0 };
+
+    function animateControlSurfaces(model, pIn, rIn, yIn) {
+      const s = model.userData.surfaces;
+      if (!s) return;
+      const k = 0.35;
+      if (s.aileronL) { s.aileronL.rotation.x = rIn * k; s.aileronR.rotation.x = -rIn * k; }
+      if (s.elevator) s.elevator.rotation.x = -pIn * k;
+      if (s.rudder) s.rudder.rotation.y = yIn * k;
+      if (s.elevonL) {
+        s.elevonL.rotation.x = Math.max(-k, Math.min(k, -(pIn - rIn) * k));
+        s.elevonR.rotation.x = Math.max(-k, Math.min(k, -(pIn + rIn) * k));
+      }
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      velBefore.copy(state.vel);
+
+      if (keys['ShiftLeft'] || keys['ShiftRight']) state.throttle = Math.min(1.0, state.throttle + 0.4 * dt);
+      if (keys['ControlLeft'] || keys['ControlRight']) state.throttle = Math.max(0.0, state.throttle - 0.4 * dt);
+
+      state.power += (state.throttle * 100 - state.power) * 3.5 * dt;
+      state.isAfterburner = (currentAircraft === 'fighter' && state.throttle > 0.70);
+
+      const fModel = models['fighter'];
+      const fl1 = fModel.getObjectByName("flame1");
+      const fl2 = fModel.getObjectByName("flame2");
+      if (fl1 && fl2) {
+        fl1.visible = state.isAfterburner;
+        fl2.visible = state.isAfterburner;
+        if (state.isAfterburner) {
+          const flameScale = 1.0 + Math.random() * 0.4;
+          fl1.scale.set(flameScale, flameScale, flameScale * 1.5);
+          fl2.scale.set(flameScale, flameScale, flameScale * 1.5);
+        }
+      }
+
+      let pIn = (keys['KeyS'] ? 1 : 0) - (keys['KeyW'] ? 1 : 0);
+      let rIn = (keys['KeyA'] ? -1 : 0) + (keys['KeyD'] ? 1 : 0);
+      let yIn = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
+
+      if (state.apMaster && !state.onGround && currentAircraft !== 'heli') {
+        if (state.altHold) {
+          const altFt = state.pos.y * 3.28084;
+          const altErr = state.targetAlt - altFt;
+          pIn = Math.max(-0.6, Math.min(0.6, altErr * 0.002));
+        }
+      }
+
+      const forwardSpeed = Math.max(0, -state.vel.z);
+      state.ias = forwardSpeed * 1.94384;
+      state.mach = state.ias / 661.47;
+
+      if (currentAircraft === 'heli') {
+        const collective = state.power / 100;
+        state.rot.x += (pIn * 0.9 - state.rot.x * 0.1) * dt;
+        state.rot.z += (-rIn * 0.9 - state.rot.z * 0.1) * dt;
+        state.rot.y += (yIn * 1.2) * dt;
+        state.vel.y += (collective * 14.0 - 9.81) * dt;
+        state.vel.z -= Math.sin(state.rot.x) * collective * 12.0 * dt;
+        state.vel.multiplyScalar(0.985);
+      } else {
+        const isFighter = currentAircraft === 'fighter';
+        const vr = isFighter ? 110 : (currentAircraft === 'airliner' ? 90 : 55);
+        const pitchRate = isFighter ? 1.8 : 0.9;
+        const rollRate = isFighter ? 3.0 : 1.4;
+
+        const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
+        state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08) * dt;
+        state.rot.y += (yIn * 0.5 * cEff - rIn * 0.2 * cEff) * dt;
+        state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3) * dt;
+
+        state.prevOnGround = state.onGround;
+        const groundHeight = currentAircraft === 'airliner' ? 2.2 : 1.2;
+
+        if (state.pos.y <= groundHeight) {
+          state.pos.y = groundHeight;
+          state.onGround = true;
+          if (state.rot.x > 0.22) state.rot.x = 0.22;
+          if (state.rot.x < 0.0) state.rot.x = 0.0;
+          state.rot.z *= 0.85;
+
+          if (state.throttle < 0.05) {
+            state.vel.z *= 0.8;
+            state.vel.x *= 0.8;
+          } else {
+            let groundThrust = (state.power / 100) * (isFighter ? 65.0 : 28.0);
+            state.vel.z -= groundThrust * dt;
+            state.vel.z *= 0.998;
+          }
+
+          if (state.ias > vr && state.rot.x > 0.05) {
+            state.onGround = false;
+            state.vel.y = forwardSpeed * Math.sin(state.rot.x) + 3.0;
+          } else {
+            state.vel.y = 0;
+          }
+
+          if (!state.prevOnGround && state.ias > 40) audio.playTouchdown();
+        } else {
+          state.onGround = false;
+
+          const liftFactor = state.rot.x * forwardSpeed * (isFighter ? 0.35 : 0.55);
+          state.vel.y += (liftFactor - 9.81) * dt;
+          state.vel.y = Math.max(-35, Math.min(40, state.vel.y));
+
+          let maxThrust = 26.0;
+          if (isFighter) {
+            maxThrust = state.isAfterburner ? 220.0 : 65.0;
+          }
+
+          let waveDragCoeff = 0.0006;
+          if (state.mach > 0.85 && state.mach < 1.25) {
+            waveDragCoeff = 0.0014;
+          }
+
+          const aeroDrag = waveDragCoeff * forwardSpeed * forwardSpeed;
+          state.vel.z -= ((state.power / 100) * maxThrust - aeroDrag) * dt;
+          state.vel.x += Math.sin(state.rot.z) * forwardSpeed * 0.25 * dt;
+          state.vel.x *= 0.985;
+        }
+      }
+
+      const gLimit = currentAircraft === 'airliner' ? 2.2 : (currentAircraft === 'heli' ? 1.4 : 1.2);
+      if (state.pos.y < gLimit) {
+        state.pos.y = gLimit;
+        state.vel.y = 0;
+        state.onGround = true;
+      }
+
+      state.pos.add(state.vel.clone().multiplyScalar(dt));
+      fleetContainer.position.copy(state.pos);
+      fleetContainer.rotation.copy(state.rot);
+
+      for (let i = tracers.length - 1; i >= 0; i--) {
+        const t = tracers[i];
+        t.position.add(t.velocity.clone().multiplyScalar(dt));
+        if (t.position.distanceTo(state.pos) > 3000) {
+          scene.remove(t);
+          tracers.splice(i, 1);
+        }
+      }
+
+      // G-load: specific force along the airframe's up axis, smoothed (display + head shake only)
+      bodyQuat.setFromEuler(state.rot);
+      tmpUp.set(0, 1, 0).applyQuaternion(bodyQuat);
+      tmpVec.copy(state.vel).sub(velBefore).divideScalar(dt);
+      tmpVec.y += 9.81;
+      const rawG = Math.max(-3, Math.min(10, tmpVec.dot(tmpUp) / 9.81));
+      gLoad += (rawG - gLoad) * Math.min(1, dt / 0.3);
+
+      animateControlSurfaces(models[currentAircraft], pIn, rIn, yIn);
+
+      const cockpit = cockpits[currentAircraft];
+      bodyVel.copy(state.vel).applyQuaternion(headQuat.copy(bodyQuat).invert());
+      const fwdSpeed = -bodyVel.z;
+      cockpit.update({
+        dt,
+        iasKt: state.ias,
+        altFt: state.pos.y * 3.28084,
+        mach: state.mach,
+        gLoad,
+        pitch: state.rot.x,
+        roll: state.rot.z,
+        headingDeg: ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360,
+        vsiFpm: state.vel.y * 196.85,
+        power: state.power,
+        throttle: state.throttle,
+        isAfterburner: state.isAfterburner,
+        onGround: state.onGround,
+        fpmValid: state.vel.length() > 5 && fwdSpeed > 1,
+        fpmAz: Math.atan2(bodyVel.x, Math.max(1, fwdSpeed)),
+        fpmEl: Math.atan2(bodyVel.y, Math.max(1, fwdSpeed))
+      }, { pitch: pIn, roll: rIn, yaw: yIn }, performance.now(), cameraMode === 'cockpit');
+
+      if (cameraMode === 'cockpit') {
+        camera.layers.set(0);
+        camera.layers.enable(LAYER_COCKPIT);
+
+        // Head shake from G-load above 1.5 G and transonic Mach buffet; head pushed down under positive G
+        const buffet = Math.max(0, 1 - Math.abs(state.mach - 1.0) / 0.2) * (state.mach > 0.85 ? 1 : 0);
+        const shakeAmp = Math.max(0, gLoad - 1.5) * 0.0012 + buffet * 0.004;
+        headShake.x += ((Math.random() * 2 - 1) * shakeAmp - headShake.x) * 0.5;
+        headShake.y += ((Math.random() * 2 - 1) * shakeAmp - headShake.y) * 0.5;
+        const sag = Math.min(0.06, Math.max(0, gLoad - 1) * 0.008);
+
+        eyeLocal.copy(cockpit.cockpitOffset);
+        eyeLocal.x += headShake.x;
+        eyeLocal.y += headShake.y - sag;
+        camera.position.copy(state.pos).add(eyeLocal.applyQuaternion(bodyQuat));
+
+        // Camera rotates with the airframe; glance keys / mouse-look turn the head inside it
+        headEuler.set(headPitch + headShake.y * 2, headYaw + headShake.x * 2, 0, 'YXZ');
+        camera.quaternion.copy(bodyQuat).multiply(headQuat.setFromEuler(headEuler));
+      } else {
+        camera.layers.set(0);
+        camera.layers.enable(LAYER_EXTERIOR);
+        const camOffset = tmpVec.copy(CHASE_OFFSETS[currentAircraft]);
+        if (isFighterCam()) camOffset.z += Math.min(18.0, (state.mach - 0.5) * 8.0);
+        camOffset.applyQuaternion(bodyQuat).add(state.pos);
+        camera.position.lerp(camOffset, 1 - Math.exp(-9.75 * dt));
+        camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));
+      }
+
+      const curAoA = (state.aoa || 0) * (180 / Math.PI);
+      audio.update(currentAircraft, state.power, state.ias, state.isAfterburner, curAoA, state.onGround);
+      renderer.render(scene, camera);
+      drawAvionics();
+    }
+
+    function isFighterCam() {
+      return currentAircraft === 'fighter';
+    }
+
+    animate();
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+
