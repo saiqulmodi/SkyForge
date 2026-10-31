@@ -1152,17 +1152,6 @@
         const groundHeight = terrainY + profile.groundHeight;
         const wheelsDown = state.pos.y <= groundHeight;
 
-        // Rudder yaws the nose; in the air, bank turns the aircraft (turn rate = g sin(bank) / v)
-        const turnRate = wheelsDown ? 0 : 9.81 * Math.sin(-state.rot.z) / Math.max(25, forwardSpeed);
-        state.rot.y += (yIn * profile.maxYawRate * cEff - turnRate) * dt;
-
-        // Velocity follows the nose: sideways slip dies out (quickly on the tyres, slower in the air)
-        fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
-        const along = state.vel.x * fwdDir.x + state.vel.z * fwdDir.z;
-        const slipKeep = Math.exp(-(wheelsDown ? 12 : 2.5) * dt);
-        state.vel.x = fwdDir.x * along + (state.vel.x - fwdDir.x * along) * slipKeep;
-        state.vel.z = fwdDir.z * along + (state.vel.z - fwdDir.z * along) * slipKeep;
-
         // Lift from angle of attack and speed: L = g (v / Vs)^2 (CL / CLmax); stall above stallAoA
         const gamma = Math.atan2(state.vel.y, Math.max(1, forwardSpeed)); // flight path angle
         const alpha = state.rot.x - gamma;
@@ -1173,6 +1162,19 @@
         const liftAccel = 9.81 * (forwardSpeed / vs) ** 2 * (cl / clMax);
         const inducedDrag = Math.abs(liftAccel * cl) * 0.05;
         state.aoa = alpha;
+
+        // Rudder yaws the nose; in the air the horizontal share of the lift turns the aircraft
+        // (turn rate = L sin(bank) / v), so pulling back in a bank tightens the turn. Turn lift capped at -3..6 g.
+        const turnLift = Math.max(-3 * 9.81, Math.min(6 * 9.81, liftAccel));
+        const turnRate = wheelsDown ? 0 : turnLift * Math.sin(-state.rot.z) / Math.max(25, forwardSpeed);
+        state.rot.y += (yIn * profile.maxYawRate * cEff - turnRate) * dt;
+
+        // Velocity follows the nose: sideways slip dies out (quickly on the tyres, slower in the air)
+        fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
+        const along = state.vel.x * fwdDir.x + state.vel.z * fwdDir.z;
+        const slipKeep = Math.exp(-(wheelsDown ? 12 : 2.5) * dt);
+        state.vel.x = fwdDir.x * along + (state.vel.x - fwdDir.x * along) * slipKeep;
+        state.vel.z = fwdDir.z * along + (state.vel.z - fwdDir.z * along) * slipKeep;
 
         if (wheelsDown) {
           state.pos.y = groundHeight;
