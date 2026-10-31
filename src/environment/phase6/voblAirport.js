@@ -5,7 +5,7 @@ import { geoToWorld, PLACES } from './geo.js';
 // parallel taxiway, apron, Terminal 1, Terminal 2 (garden terminal), ATC tower, hangars,
 // and the southern runway 09R/27L. Terminals sit between the two runways, as at the real airport.
 export const RUNWAY = { length: 4000, width: 45, halfLength: 2000 };
-const SOUTH_RUNWAY_X = geoToWorld(13.1890, 77.7066).x; // 09R/27L centreline (approx.)
+export const SOUTH_RUNWAY_X = geoToWorld(13.1890, 77.7066).x; // 09R/27L centreline (approx.)
 
 const LIGHT_SIZE_PX = 4;
 

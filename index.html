@@ -342,9 +342,9 @@
   <div id="ui-overlay">
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
-    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach RWY 09L<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach RWY 09L | [M] Map size | [N] Re-plan route home<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
-    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach
+    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map
   </div>
 
   <div id="control-deck">
@@ -400,6 +400,8 @@
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
     import { GamepadInput } from './src/core/gamepad.js';
     import { initPhase6Environment } from './src/environment/phase6/index.js';
+    import { NavComputer } from './src/nav/returnRoute.js';
+    import { MovingMap } from './src/nav/movingMap.js';
 
     // ==========================================
     // 1. PROCEDURAL AUDIO SYNTHESIZER
@@ -637,6 +639,8 @@
     // Phase 6: real Bengaluru scenery - Nandi Hills, VOBL terminals / ATC / hangars, runway markings,
     // PAPI, MALSR, NH44 highway grid, Bengaluru city (src/environment/phase6)
     const phase6 = initPhase6Environment(scene);
+    const navComputer = new NavComputer(); // return-to-land route, planned after each take-off
+    const movingMap = new MovingMap();     // north-up map overlay (M = size)
 
     // Tracers
     const tracers = [];
@@ -907,6 +911,8 @@
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
       if (e.code === 'KeyL') window.startApproach(); // 3 degree final to runway 09L
+      if (e.code === 'KeyM') movingMap.toggleSize();
+      if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z);
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -918,7 +924,7 @@
     let lastGunShotMs = 0;
 
     const padNote = document.createElement('div');
-    padNote.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10002;padding:6px 12px;font:bold 12px monospace;' +
+    padNote.style.cssText = 'position:fixed;bottom:96px;right:12px;z-index:10002;padding:6px 12px;font:bold 12px monospace;' +
       'color:#00ffcc;background:rgba(6,12,18,0.88);border:1px solid rgba(0,255,170,0.4);display:none;';
     document.body.appendChild(padNote);
     window.addEventListener('gamepadstatus', (e) => {
@@ -938,6 +944,7 @@
         else if (action === 'altDown') adjustTargetAlt(-500);
         else if (action === 'resetHead') window.lookCockpit('center');
         else if (action === 'approach') window.startApproach();
+        else if (action === 'map') movingMap.toggleSize();
         else if (action === 'ramp' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias);
         else if (action === 'prevAircraft' || action === 'nextAircraft') {
           const step = action === 'nextAircraft' ? 1 : FLEET_ORDER.length - 1;
@@ -1222,6 +1229,11 @@
       }
       phase6.update(performance.now(), state.pos);
 
+      // Return-to-land route + moving map
+      const headingNow = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
+      const navData = navComputer.update(state, headingNow, profile.groundHeight);
+      movingMap.draw(state, navData, headingNow, performance.now());
+
       fleetContainer.position.copy(state.pos);
       fleetContainer.rotation.copy(state.rot);
 
@@ -1269,7 +1281,8 @@
         onGround: state.onGround,
         fpmValid: state.vel.length() > 5 && fwdSpeed > 1,
         fpmAz: Math.atan2(bodyVel.x, Math.max(1, fwdSpeed)),
-        fpmEl: Math.atan2(bodyVel.y, Math.max(1, fwdSpeed))
+        fpmEl: Math.atan2(bodyVel.y, Math.max(1, fwdSpeed)),
+        nav: navData
       }, { pitch: pIn, roll: rIn, yaw: yIn }, performance.now(), cameraMode === 'cockpit');
 
       if (cameraMode === 'cockpit') {

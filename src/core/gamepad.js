@@ -9,6 +9,7 @@
 //   D-pad left/right: previous / next aircraft
 //   Share / View : ALT HOLD                      R3 : reset head view
 //   Options / Menu : start a final approach      L3 (hold) : wheel brakes
+//   Touchpad click : map size
 const DEADZONE = 0.12;
 
 const BUTTON_ACTIONS = {
@@ -21,7 +22,8 @@ const BUTTON_ACTIONS = {
   12: 'altUp',
   13: 'altDown',
   14: 'prevAircraft',
-  15: 'nextAircraft'
+  15: 'nextAircraft',
+  17: 'map'
 };
 
 function axis(v) {
@@ -32,7 +34,7 @@ function axis(v) {
 // Raw (non-"standard") DualSense / DualShock layout as Chrome reports it on Windows when it does not
 // remap the pad: buttons Square, Cross, Circle, Triangle, L1, R1, L2, R2, Create, Options, L3, R3, PS, Pad;
 // axes LX, LY, RX, L2, R2, RY, ... and the D-pad as a hat on axis 9.
-const RAW_SONY_BUTTON = { 0: 1, 1: 2, 2: 0, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11 };
+const RAW_SONY_BUTTON = { 0: 1, 1: 2, 2: 0, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 17: 13 };
 
 function hatDirection(v) {
   // Hat axis: up -1, right -0.43, down 0.14, left 0.71, centre > 1
@@ -103,7 +105,7 @@ export class GamepadInput {
     const pressed = pad.pressed;
 
     const buttonsNow = [];
-    for (let i = 0; i <= 15; i++) buttonsNow[i] = pressed(i);
+    for (let i = 0; i <= 17; i++) buttonsNow[i] = pressed(i);
     if (gp.index !== this.activeKey) {
       // Switching pads: take its current buttons as the baseline so nothing fires by accident
       this.activeKey = gp.index;

@@ -586,6 +586,23 @@ export class CockpitMfdSet {
     ctx.moveTo(cx - 5, cy + 10); ctx.lineTo(cx + 5, cy + 10);
     ctx.stroke();
 
+    // Bearing needle to the next return-to-land waypoint
+    if (d.nav && !d.nav.complete) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(d.nav.turn * Math.PI / 180);
+      ctx.strokeStyle = '#e879f9';
+      ctx.fillStyle = '#e879f9';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0, r - 30); ctx.lineTo(0, -(r - 30)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -(r - 22)); ctx.lineTo(-7, -(r - 36)); ctx.lineTo(7, -(r - 36)); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#e879f9';
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${d.nav.name} ${d.nav.distNm.toFixed(1)} NM`, cx, MFD_SIZE - 12);
+    }
+
     ctx.fillStyle = '#fbbf24';
     ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'right';

@@ -471,6 +471,24 @@ class CombinerHud {
     ctx.textAlign = 'center';
     ctx.fillText(String(Math.round(d.headingDeg) % 360).padStart(3, '0'), W / 2, 22);
     if (d.isAfterburner) ctx.fillText('AB', W / 2, H - 12);
+
+    // Return-to-land steering: magenta diamond on the horizon in the waypoint's direction
+    if (d.nav && !d.nav.complete) {
+      let [nx, ny] = this.toPx(Math.max(-1.2, Math.min(1.2, d.nav.turn * DEG)), -d.pitch);
+      const clamped = nx < W * 0.24 || nx > W * 0.76;
+      nx = Math.min(W * 0.76, Math.max(W * 0.24, nx));
+      ny = Math.min(H - 40, Math.max(40, ny));
+      ctx.strokeStyle = '#ff6bff';
+      ctx.fillStyle = '#ff6bff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(nx, ny - 9); ctx.lineTo(nx + 9, ny); ctx.lineTo(nx, ny + 9); ctx.lineTo(nx - 9, ny);
+      ctx.closePath();
+      clamped ? ctx.fill() : ctx.stroke();
+      ctx.font = 'bold 13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${d.nav.name} ${d.nav.distNm.toFixed(1)}NM ${d.nav.targetAltFt}FT`, W / 2, H - 32);
+    }
   }
 
   drawTape(value, pxPerUnit, tickStep, labelStep, side, cy) {
