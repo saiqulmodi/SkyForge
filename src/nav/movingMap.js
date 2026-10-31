@@ -14,6 +14,8 @@ export class MovingMap {
     this.size = 'small';
     this.airports = null;
     this.home = { icao: 'VOBL', ident: '09L', thrX: 0, thrZ: 2000 };
+    this.nearest = null; // nearest runway end to land on (always shown)
+    this.extras = null;  // { wind, ils, traffic, targets, lock } from the game loop
     this.canvas = document.createElement('canvas');
     this.canvas.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10001;border:1px solid rgba(0,255,170,0.45);' +
       'background:rgba(6,12,18,0.82);border-radius:6px;pointer-events:none;';
@@ -44,6 +46,32 @@ export class MovingMap {
     this.lastDrawMs = -Infinity;
   }
 
+  // Nearest airport, and of its runway ends the one whose approach side the aircraft is on
+  findNearest(x, z, gsMs) {
+    if (!this.airports) return null;
+    const ends = this.airports.ends();
+    let icao = null, bestD = Infinity;
+    for (const e of ends) {
+      const d = Math.hypot(e.thrX - x, e.thrZ - z);
+      if (d < bestD) { bestD = d; icao = e.icao; }
+    }
+    let best = null;
+    for (const e of ends) {
+      if (e.icao === icao && (!best || this.approachSide(e, x, z) > this.approachSide(best, x, z))) best = e;
+    }
+    if (!best) return null;
+    const d = Math.hypot(best.thrX - x, best.thrZ - z);
+    const north = -(best.thrX - x), east = -(best.thrZ - z);
+    return {
+      icao: best.icao, ident: best.ident, name: best.airportName, end: best,
+      distNm: d / 1852, distKm: d / 1000,
+      bearing: (Math.atan2(east, north) * 180 / Math.PI + 360) % 360,
+      etaMin: gsMs > 20 ? d / gsMs / 60 : null
+    };
+  }
+
+  approachSide(e, x, z) { return -((x - e.thrX) * e.dirX + (z - e.thrZ) * e.dirZ); }
+
   toggleSize() {
     this.size = this.size === 'small' ? 'large' : 'small';
     this.applySize();
@@ -55,12 +83,16 @@ export class MovingMap {
     this.lastDrawMs = nowMs;
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const cx = W / 2, cy = (H - 54) / 2; // guidance box takes the bottom 54 px
+    const gsMs = Math.hypot(state.vel.x, state.vel.z);
+    this.nearest = this.findNearest(state.pos.x, state.pos.z, gsMs);
+    const nr = this.nearest;
 
     // Centre between the aircraft and the destination runway; range fits both plus the next waypoint
     const home = { x: this.home.thrX, z: this.home.thrZ };
     const midX = (state.pos.x + home.x) / 2, midZ = (state.pos.z + home.z) / 2;
     const pts = [state.pos, home];
     if (nav && !nav.complete) pts.push(nav.route[nav.index]);
+    if (nr) pts.push({ x: nr.end.thrX, z: nr.end.thrZ });
     const need = Math.max(...pts.map((p) => Math.max(Math.abs(p.x - midX), Math.abs(p.z - midZ)))) * 1.1 + 1500;
     const half = SCALES_M.find((s) => s >= need) || SCALES_M[SCALES_M.length - 1];
     const k = (Math.min(W, H - 54) / 2 - 14) / half;
@@ -151,6 +183,35 @@ export class MovingMap {
       });
     }
 
+    // Nearest runway: cyan dashed line to its threshold
+    if (nr) {
+      const tx = sx(nr.end.thrX, nr.end.thrZ), ty = sy(nr.end.thrX, nr.end.thrZ);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sx(state.pos.x, state.pos.z), sy(state.pos.x, state.pos.z));
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(tx, ty, 5, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // Phase 8 traffic (cyan) and phase 9 range targets (orange; locked one ringed)
+    const ex = this.extras;
+    if (ex) {
+      (ex.traffic || []).forEach((t) => {
+        ctx.fillStyle = '#67e8f9';
+        ctx.beginPath(); ctx.arc(sx(t.position.x, t.position.z), sy(t.position.x, t.position.z), 3, 0, Math.PI * 2); ctx.fill();
+      });
+      (ex.targets || []).forEach((t) => {
+        const px = sx(t.position.x, t.position.z), py = sy(t.position.x, t.position.z);
+        ctx.fillStyle = '#f97316';
+        ctx.fillRect(px - 2.5, py - 2.5, 5, 5);
+        if (ex.lock === t) { ctx.strokeStyle = '#f97316'; ctx.lineWidth = 1.5; ctx.strokeRect(px - 6, py - 6, 12, 12); }
+      });
+    }
+
     // Aircraft symbol, rotated to the heading
     ctx.save();
     ctx.translate(sx(state.pos.x, state.pos.z), sy(state.pos.x, state.pos.z));
@@ -171,6 +232,24 @@ export class MovingMap {
     ctx.textAlign = 'right';
     ctx.font = '10px monospace';
     ctx.fillText(`${(half * 2 / 1000).toFixed(0)} KM ACROSS  [M] SIZE`, W - 6, 14);
+    if (ex && ex.wind) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#93c5fd';
+      ctx.fillText(`WIND ${String(Math.round(ex.wind.fromDeg)).padStart(3, '0')}/${Math.round(ex.wind.speedKts)}`, 26, 14);
+    }
+
+    // Nearest runway line (always): which runway, distance to cover, bearing, time
+    if (nr) {
+      ctx.fillStyle = 'rgba(6,12,18,0.85)';
+      ctx.fillRect(0, 34, W, 30);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#22d3ee';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText(`NEAREST ${nr.icao} RWY ${nr.ident}  ${nr.distNm.toFixed(1)} NM (${nr.distKm.toFixed(1)} KM)`, 6, 47);
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#a5f3fc';
+      ctx.fillText(`BRG ${String(Math.round(nr.bearing)).padStart(3, '0')}${nr.etaMin !== null ? `  ~${Math.max(1, Math.round(nr.etaMin))} MIN` : ''}  ${nr.name.slice(0, 18)}  [J] LAND HERE`, 6, 60);
+    }
 
     // Guidance box
     ctx.fillStyle = 'rgba(6,12,18,0.88)';
@@ -179,7 +258,7 @@ export class MovingMap {
     ctx.font = 'bold 12px monospace';
     if (!nav) {
       ctx.fillStyle = '#94a3b8';
-      ctx.fillText('ROUTE HOME: planned after take-off', 8, H - 30);
+      ctx.fillText(`ROUTE TO ${this.home.icao}: planned after take-off`, 8, H - 30);
     } else if (nav.complete) {
       ctx.fillStyle = '#4ade80';
       ctx.fillText('LANDED - route complete', 8, H - 30);

@@ -1,79 +1,49 @@
 ﻿import * as THREE from 'three';
 
+// Monsoon rain around the aircraft (phase 7). Rain streaks only: no cloud decks and no fog changes,
+// so views stay clear and the haze stays under src/render/visuals.js.
 export class MonsoonWeather {
   constructor(scene) {
     this.scene = scene;
-    this.cloudBaseAlt = 650;  // 650 m (~2,100 ft AGL)
-    this.cloudTopsAlt = 2200; // 2,200 m (~7,200 ft AGL)
-    this.rainRate = 0.85;     // 0 = dry, 1.0 = heavy tropical downpour
-
-    this.initClouds();
+    this.rainRate = 0;        // 0 = dry, 1 = heavy tropical downpour
+    this.rainCount = 3000;
+    this.box = 260;           // metres around the aircraft
     this.initPrecipitation();
   }
 
-  initClouds() {
-    const cloudLayerGeo = new THREE.PlaneGeometry(30000, 30000);
-    cloudLayerGeo.rotateX(-Math.PI / 2);
-
-    this.cloudMat = new THREE.MeshStandardMaterial({
-      color: 0x8a9299,
-      roughness: 1.0,
-      transparent: true,
-      opacity: 0.82,
-      depthWrite: false
-    });
-
-    this.cloudBottom = new THREE.Mesh(cloudLayerGeo, this.cloudMat);
-    this.cloudBottom.position.set(0, this.cloudBaseAlt, 0);
-
-    this.cloudTop = new THREE.Mesh(cloudLayerGeo, this.cloudMat);
-    this.cloudTop.position.set(0, this.cloudTopsAlt, 0);
-
-    this.scene.add(this.cloudBottom, this.cloudTop);
-  }
-
   initPrecipitation() {
-    this.rainCount = 4000;
-    const rainGeo = new THREE.BufferGeometry();
-    const positions = new Float32Array(this.rainCount * 3);
-
+    // Each drop is a short vertical streak (2 vertices)
+    const pos = new Float32Array(this.rainCount * 6);
     for (let i = 0; i < this.rainCount; i++) {
-      positions[i * 3 + 0] = (Math.random() - 0.5) * 400;
-      positions[i * 3 + 1] = Math.random() * 250;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 400;
+      const x = (Math.random() - 0.5) * this.box, y = Math.random() * this.box * 0.6, z = (Math.random() - 0.5) * this.box;
+      pos.set([x, y, z, x, y + 1.6, z], i * 6);
     }
-
-    rainGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-    const rainMat = new THREE.PointsMaterial({
-      color: 0xbbd0e8,
-      size: 0.9,
-      transparent: true,
-      opacity: 0.65
-    });
-
-    this.rainPoints = new THREE.Points(rainGeo, rainMat);
-    this.scene.add(this.rainPoints);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.rainMat = new THREE.LineBasicMaterial({ color: 0xb8c8d8, transparent: true, opacity: 0.45, depthWrite: false });
+    this.rain = new THREE.LineSegments(geo, this.rainMat);
+    this.rain.frustumCulled = false;
+    this.rain.visible = false;
+    this.scene.add(this.rain);
   }
 
-  update(aircraftPos, aircraftVelocity) {
-    // Keep rain localized relative to aircraft position
-    this.rainPoints.position.copy(aircraftPos);
+  setRain(rate) {
+    this.rainRate = rate;
+    this.rain.visible = rate > 0;
+    this.rainMat.opacity = 0.25 + 0.3 * rate;
+  }
 
-    const pos = this.rainPoints.geometry.attributes.position;
-    const speedDown = 35 * this.rainRate; // Terminal fall velocity
-
-    for (let i = 0; i < this.rainCount; i++) {
-      let y = pos.getY(i) - speedDown * 0.016;
-      if (y < 0) y = 250;
-      pos.setY(i, y);
+  update(aircraftPos, dt) {
+    if (!this.rain.visible) return;
+    this.rain.position.copy(aircraftPos);
+    this.rain.position.y -= this.box * 0.3;
+    const p = this.rain.geometry.attributes.position.array;
+    const fall = (9 + 26 * this.rainRate) * dt; // terminal fall speed
+    const top = this.box * 0.6;
+    for (let i = 0; i < p.length; i += 6) {
+      p[i + 1] -= fall; p[i + 4] -= fall;
+      if (p[i + 1] < 0) { p[i + 1] += top; p[i + 4] += top; }
     }
-    pos.needsUpdate = true;
-
-    // Inside cloud deck fog/opacity density adjustment
-    const inCloud = aircraftPos.y >= this.cloudBaseAlt && aircraftPos.y <= this.cloudTopsAlt;
-    this.scene.fog = inCloud
-      ? new THREE.FogExp2(0x8a9299, 0.008)
-      : new THREE.FogExp2(0xa6b5c4, 0.00015);
+    this.rain.geometry.attributes.position.needsUpdate = true;
   }
 }

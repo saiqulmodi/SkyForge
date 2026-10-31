@@ -1,26 +1,17 @@
 ﻿import { AITrafficManager } from './aiTrafficCircuit.js';
 import { ILSSystem } from './ilsLocalizerGlide.js';
-import { WaypointNavigator } from './sidWaypoints.js';
 
-export function initPhase8Navigation(scene) {
-  const traffic = new AITrafficManager(scene);
+// Phase 8: AI circuit traffic at VOBL + ILS guidance for the active runway.
+// (The old fixed SID list in sidWaypoints.js is replaced by the stage 4 route: TOC / en-route / arrival.)
+export function initPhase8Navigation(scene, { makeAirliner, southRunwayX }) {
+  const traffic = new AITrafficManager(scene, makeAirliner, southRunwayX);
   const ils = new ILSSystem();
-  const navigation = new WaypointNavigator();
-
   return {
     traffic,
     ils,
-    navigation,
-    update: (deltaSec, aircraftPos) => {
-      const activeTraffic = traffic.update(deltaSec);
-      const ilsGuidance = ils.computeGuidance(aircraftPos);
-      const navStatus = navigation.update(aircraftPos);
-
-      return {
-        traffic: activeTraffic,
-        ils: ilsGuidance,
-        nav: navStatus
-      };
-    }
+    update: (deltaSec, aircraftPos, runwayEnd) => ({
+      traffic: traffic.update(deltaSec),
+      ils: ils.computeGuidance(aircraftPos, runwayEnd)
+    })
   };
 }

@@ -343,7 +343,8 @@
   <div id="ui-overlay">
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
-    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route home<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route | [V] NAV autopilot (follows the route) | [J] Land at the nearest runway<br>
+    Fighter range: [Space] gun | [F] missile on radar lock (orange box) | ILS needles appear on final<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
     Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map<br>
     <span style="opacity:0.6">Terrain: SRTM, GMTED2010, ETOPO1 via Mapzen Terrain Tiles (AWS Open Data)</span>
@@ -376,6 +377,10 @@
         <button onclick="startAtRunway()">START HERE</button>
         <button onclick="startApproach()">APPROACH</button>
       </div>
+      <b style="display:block;margin-top:6px;">DESTINATION</b>
+      <div class="btn-grid" style="margin-top: 4px;"><button onclick="landNearest()">LAND NEAREST [J]</button></div>
+      <select id="dst-select" onchange="selectDestination(this.value)"
+        style="display:block;width:100%;margin-top:4px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;font:11px monospace;padding:2px;"></select>
     </div>
 
     <div class="panel-box">
@@ -412,6 +417,7 @@
       <div class="btn-grid">
         <button id="btn-ap" onclick="toggleAP()">AP [Z]</button>
         <button id="btn-alt" onclick="toggleAltHold()">ALT HOLD [X]</button>
+        <button id="btn-nav" onclick="toggleNav()">NAV [V]</button>
       </div>
       <div class="btn-grid" style="margin-top: 4px;">
         <button onclick="adjustTargetAlt(-500)">▼ -500 FT</button>
@@ -431,6 +437,11 @@
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
     import { GamepadInput } from './src/core/gamepad.js';
     import { initPhase6Environment } from './src/environment/phase6/index.js';
+    import { initPhase7Weather } from './src/environment/phase7/index.js';
+    import { initPhase8Navigation } from './src/environment/phase8/index.js';
+    import { initPhase9Combat } from './src/combat/phase9/index.js';
+    import { createAirliner } from './src/aircraft/airliner.js';
+    import { SOUTH_RUNWAY_X } from './src/environment/phase6/voblAirport.js';
     import { NavComputer } from './src/nav/returnRoute.js';
     import { MovingMap } from './src/nav/movingMap.js';
     import { Terrain, SEA_LEVEL_Y } from './src/world/terrain.js';
@@ -666,9 +677,34 @@
     // Phase 6: real Bengaluru scenery - Nandi Hills, VOBL terminals / ATC / hangars, runway markings,
     // PAPI, MALSR, NH44 highway grid, Bengaluru city (src/environment/phase6)
     const phase6 = initPhase6Environment(scene, terrain);
-    const navComputer = new NavComputer(); // return-to-land route, planned after each take-off
+
+    // Phase 7: wind / gusts, monsoon rain (no clouds), wet-runway braking - set by the weather buttons
+    const phase7 = initPhase7Weather(scene);
+    let wind = null;
+    // Phase 8: AI circuit traffic at VOBL (real airliner model) + ILS for the active runway
+    const phase8 = initPhase8Navigation(scene, {
+      southRunwayX: SOUTH_RUNWAY_X,
+      makeAirliner: () => {
+        const a = createAirliner();
+        visuals.enhanceAircraft(a.mesh);
+        return { mesh: a.mesh, groundHeight: a.profile.groundHeight };
+      }
+    });
+    let ilsNow = { inRange: false };
+    // Phase 9: fighter weapons range - target drones + ground sites, gun (Space / X-A), missiles (F) on radar lock
+    const combat = initPhase9Combat(scene, {
+      groundY: (x, z) => terrain.groundY(x, z),
+      onDestroyed: (t) => flightMsg(`SPLASH - ${t.id} DESTROYED`, '#f97316', 3500)
+    });
+    let combatNow = null;
+    let missilesLeft = 6;
+    const navComputer = new NavComputer(); // route to the destination (default: back to the departure runway)
+    navComputer.groundFtAt = (x, z) => amslFt(terrain.groundY(x, z));
+    let destEnd = null; // stage 4: chosen destination runway end (null = return to the departure runway)
+    const CRUISE_FT = { trainer: 9500, airliner: 25000, fighter: 25000, heli: 5500 };
     const movingMap = new MovingMap();     // north-up map overlay (M = size)
     movingMap.setAirports(airports);
+    window.skyforgeMap = movingMap; // console check: skyforgeMap.nearest, skyforgeMap.extras
     navComputer.setRunway(activeEnd);
     movingMap.setHome(activeEnd);
 
@@ -721,6 +757,7 @@
       visuals.enhanceAircraft(aircraft.mesh, cockpit.group);
       profile = getFlightProfile();
       currentAircraft = type;
+      navComputer.setCruise(CRUISE_FT[type] || 9500);
 
       if (airborne) {
         // Keep position, heading and speed; just keep the new airframe's gear clear of the ground
@@ -748,10 +785,14 @@
       state.onGround = true;
       state.apMaster = false;
       state.altHold = false;
+      state.navMode = false;
       landing.airTime = 0;
       landing.rotateCued = false;
       landing.crashResetAt = 0;
       landing.rollout = false;
+      landing.depMs = 0;
+      missilesLeft = 6;
+      landing.depIcao = activeEnd.icao;
       updateAPReadout();
     }
 
@@ -803,7 +844,9 @@
       if (state.rot.x < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
       if (!rwy && state.ias > 40) return crash(onHigherGround ? 'TERRAIN IMPACT' : 'OFF-RUNWAY TOUCHDOWN');
       const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
-      flightMsg(`${grade} LANDING - ${fpm} FPM, ${rwy.icao} RWY ${rwy.ident}, ${rwy.distPast} M past threshold. Brakes: B / L3`, '#4ade80', 7000);
+      const arrived = destEnd && rwy.icao === destEnd.icao && rwy.icao !== landing.depIcao;
+      const trip = arrived && landing.depMs ? ` - ARRIVED from ${landing.depIcao}, flight time ${Math.round((performance.now() - landing.depMs) / 60000)} min` : '';
+      flightMsg(`${grade} LANDING - ${fpm} FPM, ${rwy.icao} RWY ${rwy.ident}, ${rwy.distPast} M past threshold${trip}. Brakes: B / L3`, '#4ade80', 9000);
     }
 
     // Puts the aircraft on a 3 degree final to the active runway (fixed-wing 8 km out, helicopter 1.5 km)
@@ -844,8 +887,36 @@
       const e = airports.end(icao, ident);
       if (!e) return;
       activeEnd = e;
+      if (!destEnd) { navComputer.setRunway(e); movingMap.setHome(e); }
+    };
+
+    // Nearest runway (always on the map): route straight to it
+    window.landNearest = () => {
+      const n = movingMap.nearest;
+      if (!n) return;
+      const dst = document.getElementById('dst-select');
+      if (dst) dst.value = `${n.icao} ${n.ident}`;
+      window.selectDestination(`${n.icao} ${n.ident}`);
+    };
+
+    // Stage 4: destination airport (route = TOC -> en-route points -> TOD -> arrival fixes -> runway)
+    window.selectDestination = (value) => {
+      if (value === 'RETURN') {
+        destEnd = null;
+        navComputer.setRunway(activeEnd);
+        movingMap.setHome(activeEnd);
+        flightMsg(`ROUTE: back to ${activeEnd.icao} RWY ${activeEnd.ident}`, '#e879f9', 4000);
+        return;
+      }
+      const [icao, ident] = value.split(' ');
+      const e = airports.end(icao, ident);
+      if (!e) return;
+      destEnd = e;
       navComputer.setRunway(e);
       movingMap.setHome(e);
+      if (!state.onGround) navComputer.replan(state.pos.x, state.pos.z, amslFt(state.pos.y));
+      const nm = Math.round(Math.hypot(e.thrX - state.pos.x, e.thrZ - state.pos.z) / 1852);
+      flightMsg(`ROUTE: ${activeEnd.icao} -> ${e.icao} ${e.airportName} RWY ${e.ident}, ${nm} NM. Take off, then NAV [V] follows the route`, '#e879f9', 7000);
     };
     window.startAtRunway = () => { resetToThreshold(); flightMsg(`${activeEnd.icao} ${activeEnd.airportName} - RWY ${activeEnd.ident}, ${activeEnd.elevFt} FT`, '#38bdf8', 4000); };
     (function fillAirportPicker() {
@@ -859,6 +930,17 @@
           opt.textContent = `${e.icao} ${e.airportName} - RWY ${e.ident}`;
           if (e === activeEnd || (e.icao === activeEnd.icao && e.ident === activeEnd.ident)) opt.selected = true;
           sel.appendChild(opt);
+        });
+      const dst = document.getElementById('dst-select');
+      if (!dst) return;
+      dst.innerHTML = '<option value="RETURN">Return to departure runway</option>';
+      airports.ends()
+        .sort((a, b) => (a.icao + a.ident).localeCompare(b.icao + b.ident))
+        .forEach((e) => {
+          const opt = document.createElement('option');
+          opt.value = `${e.icao} ${e.ident}`;
+          opt.textContent = `${e.icao} ${e.airportName} - RWY ${e.ident}`;
+          dst.appendChild(opt);
         });
     })();
 
@@ -876,7 +958,12 @@
     // 5. CONTROLS & AUTOPILOT
     // ==========================================
     // Weather presets: haze density/colour, sun strength and sky turbidity (src/render/visuals.js)
-    window.setWeather = (preset) => visuals.setWeather(preset);
+    window.setWeather = (preset) => {
+      visuals.setWeather(preset);
+      const rwyHdg = (Math.atan2(-activeEnd.dirZ, -activeEnd.dirX) * 180 / Math.PI + 360) % 360;
+      const w = phase7.setPreset(preset, rwyHdg);
+      flightMsg(`WIND ${String(Math.round(w.from)).padStart(3, '0')}/${w.kts} KT G${w.kts + w.gust}${w.rain ? ' | RAIN' : ''}${w.wet ? ' | WET RUNWAY' : ''}`, '#38bdf8', 4000);
+    };
 
     window.toggleAP = () => {
       if (state.onGround) return;
@@ -894,6 +981,14 @@
       updateAPReadout();
     };
 
+    // NAV: autopilot follows the route (bank towards the next waypoint, altitude hold at its altitude)
+    window.toggleNav = () => {
+      if (state.onGround || profile.rotorcraft) { flightMsg('NAV: airborne fixed-wing only', '#facc15', 2500); return; }
+      state.navMode = !state.navMode;
+      if (state.navMode) { state.apMaster = true; state.altHold = true; }
+      updateAPReadout();
+    };
+
     window.adjustTargetAlt = (deltaFt) => {
       state.targetAlt = Math.max(500, state.targetAlt + deltaFt);
       updateAPReadout();
@@ -904,11 +999,15 @@
       const btnAlt = document.getElementById('btn-alt');
       if (btnAp) btnAp.classList.toggle('active', state.apMaster);
       if (btnAlt) btnAlt.classList.toggle('active', state.altHold);
+      const btnNav = document.getElementById('btn-nav');
+      if (btnNav) btnNav.classList.toggle('active', !!state.navMode);
       const tgtStr = state.altHold ? `${state.targetAlt} FT` : 'OFF';
-      document.getElementById('ap-readout').innerText = `STATUS: ${state.apMaster ? 'AP ON' : 'AP OFF'} | TGT: ${tgtStr}`;
+      document.getElementById('ap-readout').innerText = `STATUS: ${state.apMaster ? 'AP ON' : 'AP OFF'}${state.navMode ? ' + NAV' : ''} | TGT: ${tgtStr}`;
     }
 
     const keys = {};
+    const tmpFwd = new THREE.Vector3();
+    let lastNav = null; // last route guidance (NAV mode steers by it)
     let cameraMode = 'cockpit'; // 'cockpit' or 'chase'
     let headYaw = 0;   // Pilot glance horizontal
     let headPitch = 0; // Pilot glance vertical
@@ -960,14 +1059,17 @@
       }
       keys[e.code] = true;
       if (e.code === 'KeyZ') toggleAP();
+      if (e.code === 'KeyV') toggleNav();
       if (e.code === 'KeyX') toggleAltHold();
       if (e.code === 'BracketLeft') adjustTargetAlt(-500);
       if (e.code === 'BracketRight') adjustTargetAlt(500);
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
+      if (e.code === 'KeyF') fireMissile();
+      if (e.code === 'KeyJ') window.landNearest();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
       if (e.code === 'KeyL') window.startApproach(); // 3 degree final to the active runway
       if (e.code === 'KeyM') movingMap.toggleSize();
-      if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z);
+      if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z, amslFt(state.pos.y));
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -1014,14 +1116,24 @@
       }
     }
 
+    // Gun: 20 mm rounds from the phase 9 weapons system (gravity drop, hit detection on the range targets)
     function fireTracer() {
-      const tracer = new THREE.Mesh(tracerGeo, tracerMat);
-      tracer.position.copy(state.pos).add(new THREE.Vector3(0, 0, -8).applyEuler(state.rot));
-      tracer.rotation.copy(state.rot);
-      tracer.velocity = new THREE.Vector3(0, 0, -1200).applyEuler(state.rot);
-      scene.add(tracer);
-      tracers.push(tracer);
+      const fwd = new THREE.Vector3(0, 0, -1).applyEuler(state.rot);
+      combat.weapons.fireCannon(state.pos.clone().addScaledVector(fwd, 8), state.vel, fwd);
       audio.playCannon();
+    }
+
+    // Missile: needs a radar lock (target inside the 30 degree cone, 15 km); 6 per sortie, reloaded on reset
+    function fireMissile() {
+      if (currentAircraft !== 'fighter') return;
+      const lock = combatNow && combatNow.lockedTarget;
+      if (!lock) { flightMsg('NO LOCK - point the nose at a target (30 deg cone, 15 km)', '#facc15', 2500); return; }
+      if (missilesLeft <= 0) { flightMsg('WINCHESTER - no missiles left (reset at the runway to reload)', '#facc15', 3000); return; }
+      missilesLeft--;
+      const fwd = new THREE.Vector3(0, 0, -1).applyEuler(state.rot);
+      const rail = state.pos.clone().addScaledVector(fwd, 4).add(new THREE.Vector3(missilesLeft % 2 ? 2.5 : -2.5, -0.6, 0).applyEuler(state.rot));
+      combat.weapons.launchMissile(rail, state.vel, fwd, lock);
+      flightMsg(`FOX 2 - ${lock.id} | ${missilesLeft} LEFT`, '#f97316', 2500);
     }
 
     // ==========================================
@@ -1108,6 +1220,7 @@
     const headEuler = new THREE.Euler(0, 0, 0, 'YXZ');
     const eyeLocal = new THREE.Vector3();
     const headShake = { x: 0, y: 0 };
+    const chaseOffsetSmooth = new THREE.Vector3(); // chase camera offset (world axes), eased for rotation only
 
     function animate() {
       requestAnimationFrame(animate);
@@ -1135,6 +1248,17 @@
         yIn = Math.max(-1, Math.min(1, yIn + pad.yaw));
       }
 
+      if (state.navMode && (!state.apMaster || state.onGround || profile.rotorcraft || !lastNav || lastNav.complete)) {
+        state.navMode = false;
+        updateAPReadout();
+      }
+      if (state.navMode) {
+        // Bank up to 25 deg towards the next waypoint; hold its altitude
+        const wantBank = Math.max(-25, Math.min(25, lastNav.turn * 1.2));
+        const bankNow = -state.rot.z * 180 / Math.PI;
+        rIn = Math.max(-1, Math.min(1, rIn + (wantBank - bankNow) * 0.05));
+        if (state.targetAlt !== lastNav.targetAltFt) { state.targetAlt = lastNav.targetAltFt; updateAPReadout(); }
+      }
       if (state.apMaster && !state.onGround && !profile.rotorcraft) {
         if (state.altHold) {
           const altFt = amslFt(state.pos.y);
@@ -1202,7 +1326,7 @@
           state.rot.z *= 0.85;
 
           // Ground roll: rolling resistance at idle, wheel brakes (B / L3) for the landing rollout
-          const groundDecel = (state.throttle < 0.05 ? 1.2 : 0) + (braking ? 5.0 : 0);
+          const groundDecel = (state.throttle < 0.05 ? 1.2 : 0) + (braking ? 5.0 * phase7.brakeFactor(state.ias) : 0);
           const rollSpeed = Math.hypot(state.vel.x, state.vel.z);
           if (groundDecel > 0 && rollSpeed > 0) {
             const k = Math.max(0, rollSpeed - groundDecel * dt) / rollSpeed;
@@ -1230,6 +1354,7 @@
             landing.rollout = false;
             state.onGround = false;
             state.vel.y = 0.5;
+            if (!landing.depMs) { landing.depMs = performance.now(); landing.depIcao = activeEnd.icao; }
             flightMsg('AIRBORNE - positive climb', '#4ade80', 2500);
           } else {
             state.vel.y = 0;
@@ -1274,6 +1399,13 @@
       if (profile.rotorcraft && !state.prevOnGround && state.onGround) onTouchdown(-velBefore.y);
 
       state.pos.add(state.vel.clone().multiplyScalar(dt));
+      // Phase 7: the air mass moves the aircraft (drift) and gusts bump it (turbulence)
+      wind = phase7.update(performance.now() / 1000, dt, state.pos, Math.max(0, state.pos.y - terrainY));
+      if (!state.onGround) {
+        state.pos.addScaledVector(wind.vector, dt);
+        state.rot.x += (Math.random() - 0.5) * wind.turbulence * dt * 2;
+        state.rot.z += (Math.random() - 0.5) * wind.turbulence * dt * 3;
+      }
 
       // Take-off / landing bookkeeping, Nandi Hills terrain, crash reset
       if (!state.onGround) landing.airTime += dt;
@@ -1290,6 +1422,12 @@
       // Return-to-land route + moving map
       const headingNow = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
       const navData = navComputer.update(state, headingNow, amslFt(state.pos.y));
+      lastNav = navData;
+      const p8 = phase8.update(dt, state.pos, destEnd || activeEnd);
+      ilsNow = p8.ils;
+      tmpFwd.set(0, 0, -1).applyEuler(state.rot);
+      combatNow = combat.update(dt, state.pos, tmpFwd);
+      movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null };
       movingMap.draw(state, navData, headingNow, performance.now());
 
       fleetContainer.position.copy(state.pos);
@@ -1367,10 +1505,13 @@
         camera.layers.enable(LAYER_EXTERIOR);
         const camOffset = tmpVec.copy(aircraft.chaseOffset);
         if (isFighterCam()) camOffset.z += Math.max(0, Math.min(18.0, (state.mach - 0.5) * 8.0));
-        camOffset.applyQuaternion(bodyQuat).add(state.pos);
-        // Smooth follow; snap straight there after a jump (new airport, approach start, reset)
-        if (camera.position.distanceTo(camOffset) > 1000) camera.position.copy(camOffset);
-        else camera.position.lerp(camOffset, 1 - Math.exp(-9.75 * dt));
+        camOffset.applyQuaternion(bodyQuat);
+        // The camera rides with the aircraft (no position lag), so the aircraft stays at the centre of the screen
+        // and the ground, traffic and targets pass at their true relative speed. Only the viewing angle eases
+        // after a manoeuvre; it snaps after a jump (new airport, approach start, reset).
+        if (chaseOffsetSmooth.lengthSq() === 0 || camera.position.distanceTo(state.pos) > 1000) chaseOffsetSmooth.copy(camOffset);
+        else chaseOffsetSmooth.lerp(camOffset, 1 - Math.exp(-6 * dt));
+        camera.position.copy(state.pos).add(chaseOffsetSmooth);
         camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));
       }
 
@@ -1379,6 +1520,42 @@
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();
+      drawCombatAndIls();
+    }
+
+    // Radar lock box + ILS needles, drawn over the HUD canvas in both views
+    const projV = new THREE.Vector3();
+    function drawCombatAndIls() {
+      const W = hudCanvas.width, H = hudCanvas.height;
+      const lock = currentAircraft === 'fighter' && combatNow ? combatNow.lockedTarget : null;
+      if (lock) {
+        projV.copy(lock.position).project(camera);
+        if (projV.z < 1) {
+          const x = (projV.x * 0.5 + 0.5) * W, y = (-projV.y * 0.5 + 0.5) * H;
+          ctx.strokeStyle = '#f97316'; ctx.lineWidth = 2;
+          ctx.strokeRect(x - 16, y - 16, 32, 32);
+          ctx.fillStyle = '#f97316'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+          ctx.fillText(`${lock.id} ${(lock.position.distanceTo(state.pos) / 1000).toFixed(1)} KM [F]`, x + 20, y - 6);
+        }
+      }
+      if (ilsNow && ilsNow.inRange) {
+        // Cross-pointer: vertical needle = localizer, horizontal = glide slope (centre = on the beam)
+        const r = 46, cx = W - r - 24, cy = H - r - 150;
+        ctx.fillStyle = 'rgba(6,12,18,0.7)'; ctx.fillRect(cx - r - 8, cy - r - 18, 2 * r + 16, 2 * r + 26);
+        ctx.strokeStyle = 'rgba(226,232,240,0.6)'; ctx.lineWidth = 1;
+        for (let k = -2; k <= 2; k++) {
+          if (!k) continue;
+          ctx.beginPath(); ctx.arc(cx + k * r / 2, cy, 2, 0, Math.PI * 2); ctx.stroke();
+          ctx.beginPath(); ctx.arc(cx, cy + k * r / 2, 2, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.strokeStyle = '#e879f9'; ctx.lineWidth = 3;
+        const lx = cx + ilsNow.locDeviation * r, gy = cy - ilsNow.gsDeviation * r;
+        ctx.beginPath(); ctx.moveTo(lx, cy - r); ctx.lineTo(lx, cy + r); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx - r, gy); ctx.lineTo(cx + r, gy); ctx.stroke();
+        ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(`${ilsNow.ident}  ${ilsNow.dmeNm.toFixed(1)} NM`, cx, cy - r - 6);
+        ctx.textAlign = 'left';
+      }
     }
 
     function isFighterCam() {

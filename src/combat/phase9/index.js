@@ -1,10 +1,11 @@
-﻿import { TargetDroneManager } from './targetDrones.js';
+import { TargetDroneManager } from './targetDrones.js';
 import { WeaponsSystem } from './ballisticsWeaponry.js';
 import { CombatEffectsEngine } from './combatEffects.js';
 
-export function initPhase9Combat(scene) {
-  const targets = new TargetDroneManager(scene);
-  const weapons = new WeaponsSystem(scene);
+// groundY(x, z): terrain height (world y); onDestroyed(target): called once per kill
+export function initPhase9Combat(scene, { groundY = () => 0, onDestroyed = () => {} } = {}) {
+  const targets = new TargetDroneManager(scene, groundY);
+  const weapons = new WeaponsSystem(scene, groundY);
   const effects = new CombatEffectsEngine(scene);
 
   return {
@@ -58,6 +59,7 @@ export function initPhase9Combat(scene) {
           tgt.isDestroyed = true;
           tgt.mesh.visible = false;
           effects.triggerExplosion(tgt.position, 3.2);
+          onDestroyed(tgt);
         }
       });
 

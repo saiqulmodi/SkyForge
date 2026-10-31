@@ -1,4 +1,4 @@
-# SkyForge - South India travel, STAGE 3: airports
+# SkyForge - South India travel, STAGE 4 + phases 7-9 (stage 3 below)
 
 STATUS: DONE
 
@@ -19,3 +19,10 @@ World: origin = VOBL 09L/27R centre, y = 0 = 915 m AMSL; -Z east, +Z west, -X no
 - 2026-10-31: stage 3 started.
 - 2026-10-31: stage 3 done. 29 airports (8.7 KB JSON). runwayAt verified (VOMM 07/25, VOTV 14, VOCI 27, VOHS 09L, VOBL, VOML 24; abeam = none). Spawn VOMM 07 at field 56 ft, scenery + PAPI + crossing 12/30 visible; approach VOMM 07 / VOTV 14 with route home to the chosen runway; chase camera snaps after jumps. Browser window was throttled to ~1.6 FPS (stage-2 build identical there) - FPS not re-measured. Waiting for go on stage 4.
 - 2026-10-31: visual upgrade (src/render/visuals.js): physical sky + matching haze, sky reflections, sun shadows following the aircraft, farmland/asphalt/concrete detail, glossy sea, aircraft paint + panel lines, lit runway paint, Time of Day (Noon/Morning/Golden/Dusk) and Graphics (Low/Medium/High+Bloom) panels. No clouds (user: keep views clear). Stage 4 still waiting for go.
+- 2026-10-31: user "go": stage 4 + phases 7-9 done.
+  Stage 4: DESTINATION picker (any of the 29 airports) -> route TOC / WPn (every ~60 km) / TOD (3 NM per 1,000 ft) / arrival JOIN-IF-FAF-RW; cruise per aircraft (trainer 9,500, jets 25,000, heli 5,500) raised to clear ground +2,000 ft; NAV [V] autopilot banks to the next waypoint + holds its altitude; ARRIVED message with flight time.
+  Nearest runway always on the map (user request): ICAO, runway end on the approach side, NM + KM, bearing, minutes; [J] / LAND NEAREST routes there.
+  Phase 7: wind per weather button (clear 290/6, crosswind 28 kt square to the active runway, monsoon 240/16 G26 + rain + wet runway, CAT III calm + wet), drift + gust turbulence, wet braking; rain streaks only (no cloud decks, no fog override).
+  Phase 8: two airliners fly touch-and-go circuits at VOBL (09L left, 09R right); ILS cross-pointer for the destination/active runway on final. Old fixed SID list superseded by the stage 4 route.
+  Phase 9: fighter gun with hit detection, [F] missiles (6) on radar lock (orange box), target drones + ground sites on real terrain, respawn after 45 s, kills announced.
+  Chase camera rides with the aircraft (always centred; world moves at true relative speed).

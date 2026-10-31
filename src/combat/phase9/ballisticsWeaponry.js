@@ -1,8 +1,10 @@
-﻿import * as THREE from 'three';
+import * as THREE from 'three';
 
 export class WeaponsSystem {
-  constructor(scene) {
+  // groundY(x, z): terrain height (world y) so rounds stop at the real ground
+  constructor(scene, groundY = () => 0) {
     this.scene = scene;
+    this.groundY = groundY;
     this.bullets = [];
     this.missiles = [];
 
@@ -11,14 +13,18 @@ export class WeaponsSystem {
     this.bulletLife = 2.5;   // Seconds before tracer burn-out
 
     // Tracer visual geometry
-    const bulletGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.5, 4);
-    bulletGeo.rotateX(Math.PI / 2);
-    this.bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+    this.bulletGeo = new THREE.CylinderGeometry(0.12, 0.12, 5.0, 4);
+    this.bulletGeo.rotateX(Math.PI / 2);
+    this.bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe066, toneMapped: false });
 
     // Missile visual geometry
     this.missileGeo = new THREE.CylinderGeometry(0.18, 0.18, 3.6, 6);
     this.missileGeo.rotateX(Math.PI / 2);
     this.missileMat = new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.3 });
+    this.flameMat = new THREE.MeshBasicMaterial({ color: 0xffb347, toneMapped: false });
+    this.flameGeo = new THREE.ConeGeometry(0.22, 2.2, 8);
+    this.flameGeo.rotateX(-Math.PI / 2);
+    this.flameGeo.translate(0, 0, -2.9);
   }
 
   fireCannon(muzzlePos, aircraftVel, forwardDir) {
@@ -39,6 +45,7 @@ export class WeaponsSystem {
 
   launchMissile(railPos, aircraftVel, forwardDir, lockedTarget) {
     const mesh = new THREE.Mesh(this.missileGeo, this.missileMat);
+    mesh.add(new THREE.Mesh(this.flameGeo, this.flameMat)); // motor plume
     mesh.position.copy(railPos);
     this.scene.add(mesh);
 
@@ -62,7 +69,7 @@ export class WeaponsSystem {
       b.position.addScaledVector(b.velocity, deltaSec);
       b.mesh.position.copy(b.position);
 
-      if (b.life <= 0 || b.position.y <= 0) {
+      if (b.life <= 0 || b.position.y <= this.groundY(b.position.x, b.position.z)) {
         this.scene.remove(b.mesh);
         this.bullets.splice(i, 1);
       }
@@ -83,7 +90,7 @@ export class WeaponsSystem {
       m.mesh.position.copy(m.position);
       m.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), m.velocity.clone().normalize());
 
-      if (m.life <= 0 || m.position.y <= 0) {
+      if (m.life <= 0 || m.position.y <= this.groundY(m.position.x, m.position.z)) {
         this.scene.remove(m.mesh);
         this.missiles.splice(i, 1);
       }
