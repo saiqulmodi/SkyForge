@@ -343,7 +343,7 @@
   <div id="ui-overlay">
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
-    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route | [V] NAV autopilot (follows the route) | [J] Land at the nearest runway<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route | [V] NAV autopilot (follows the route) | [J] Land at the nearest runway | [P] 2 players on one screen (second PS5 controller flies P2)<br>
     Fighter range: [Space] gun | [F] missile on radar lock (orange box) | ILS needles appear on final<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
     Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map<br>
@@ -358,6 +358,7 @@
         <button id="btn-airliner" onclick="selectAircraft('airliner')">Airliner</button>
         <button id="btn-fighter" class="active" onclick="selectAircraft('fighter')">Fighter</button>
         <button id="btn-heli" onclick="selectAircraft('heli')">Helicopter</button>
+        <button id="btn-2p" onclick="toggleTwoPlayer()">2 PLAYERS [P]</button>
         </div>
       </div>
       <div class="panel-box">
@@ -441,6 +442,7 @@
     import { initPhase8Navigation } from './src/environment/phase8/index.js';
     import { initPhase9Combat } from './src/combat/phase9/index.js';
     import { createAirliner } from './src/aircraft/airliner.js';
+    import { Wingman, sharedChaseCamera } from './src/multiplayer/wingman.js';
     import { SOUTH_RUNWAY_X } from './src/environment/phase6/voblAirport.js';
     import { NavComputer } from './src/nav/returnRoute.js';
     import { MovingMap } from './src/nav/movingMap.js';
@@ -1013,6 +1015,7 @@
     let headPitch = 0; // Pilot glance vertical
 
     window.toggleCameraView = () => {
+      if (twoPlayer && cameraMode === 'chase') { flightMsg('2 PLAYERS: shared outside view (cockpit view is one-player)', '#fbbf24', 2500); return; }
       cameraMode = cameraMode === 'chase' ? 'cockpit' : 'chase';
       const btn = document.getElementById('btn-cam');
       if (btn) btn.innerText = cameraMode === 'cockpit' ? 'VIEW: COCKPIT [C]' : 'VIEW: CHASE [C]';
@@ -1066,6 +1069,7 @@
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
       if (e.code === 'KeyF') fireMissile();
       if (e.code === 'KeyJ') window.landNearest();
+      if (e.code === 'KeyP') window.toggleTwoPlayer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
       if (e.code === 'KeyL') window.startApproach(); // 3 degree final to the active runway
       if (e.code === 'KeyM') movingMap.toggleSize();
@@ -1077,6 +1081,20 @@
     // GAME CONTROLLER (right stick = pitch/roll, left stick = throttle/rudder; see src/core/gamepad.js)
     // ==========================================
     const gamepad = new GamepadInput();
+    // Two players on one screen: player 2 flies with the second controller; one camera frames both aircraft
+    const gamepad2 = new GamepadInput(1);
+    const wingman = new Wingman({ scene, terrain, combat, visuals, amslFt, message: (t, c, ms) => flightMsg(t, c, ms) });
+    let twoPlayer = false;
+    window.toggleTwoPlayer = () => {
+      twoPlayer = !twoPlayer;
+      gamepad.slot = twoPlayer ? 0 : null; // P1 = first controller, P2 = second
+      wingman.enable(twoPlayer, state);
+      if (twoPlayer && cameraMode === 'cockpit') window.toggleCameraView();
+      const btn = document.getElementById('btn-2p');
+      if (btn) btn.classList.toggle('active', twoPlayer);
+      const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter((g) => g && g.connected).length : 0;
+      flightMsg(twoPlayer ? `2 PLAYERS ON - P2 uses controller 2${pads < 2 ? ` (connect a second pad: ${pads} found)` : ''}. P2: D-pad < > aircraft, X gun, \u25A1 missile, Options = rejoin P1` : '2 PLAYERS OFF', '#fbbf24', 6000);
+    };
     const FLEET_ORDER = ['trainer', 'airliner', 'fighter', 'heli'];
     let lastGunShotMs = 0;
 
@@ -1515,6 +1533,12 @@
         camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));
       }
 
+      if (twoPlayer) {
+        wingman.update(dt, gamepad2.poll(), state);
+        camera.layers.set(0);
+        camera.layers.enable(LAYER_EXTERIOR);
+        sharedChaseCamera(camera, state, wingman.state, aircraft.chaseOffset.length(), dt);
+      }
       const curAoA = (state.aoa || 0) * (180 / Math.PI);
       audio.update(currentAircraft, state.power, state.ias, state.isAfterburner, curAoA, state.onGround);
       visuals.update(state.pos);
@@ -1527,6 +1551,22 @@
     const projV = new THREE.Vector3();
     function drawCombatAndIls() {
       const W = hudCanvas.width, H = hudCanvas.height;
+      if (twoPlayer) {
+        const sep = state.pos.distanceTo(wingman.state.pos);
+        [[state.pos, 'P1', '#4ade80'], [wingman.state.pos, 'P2', '#fbbf24']].forEach(([pos, tag, col]) => {
+          projV.copy(pos).project(camera);
+          let x = (projV.x * 0.5 + 0.5) * W, y = (-projV.y * 0.5 + 0.5) * H - 26;
+          const off = projV.z > 1 || x < 20 || x > W - 20 || y < 20 || y > H - 110;
+          if (projV.z > 1) { x = W - x; y = H - y; }
+          x = Math.max(24, Math.min(W - 24, x)); y = Math.max(24, Math.min(H - 120, y));
+          ctx.fillStyle = col; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+          ctx.fillText(off ? `${tag} \u25B6` : tag, x, y);
+          ctx.beginPath(); ctx.moveTo(x - 5, y + 4); ctx.lineTo(x + 5, y + 4); ctx.lineTo(x, y + 11); ctx.closePath(); ctx.fill();
+        });
+        ctx.fillStyle = sep > 6000 ? '#f87171' : '#e2e8f0'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(`P1-P2 ${sep < 1852 ? Math.round(sep) + ' M' : (sep / 1852).toFixed(1) + ' NM'}${sep > 6000 ? ' - STAY TOGETHER' : ''}`, W / 2, 22);
+        ctx.textAlign = 'left';
+      }
       const lock = currentAircraft === 'fighter' && combatNow ? combatNow.lockedTarget : null;
       if (lock) {
         projV.copy(lock.position).project(camera);

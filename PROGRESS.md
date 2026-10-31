@@ -26,3 +26,4 @@ World: origin = VOBL 09L/27R centre, y = 0 = 915 m AMSL; -Z east, +Z west, -X no
   Phase 8: two airliners fly touch-and-go circuits at VOBL (09L left, 09R right); ILS cross-pointer for the destination/active runway on final. Old fixed SID list superseded by the stage 4 route.
   Phase 9: fighter gun with hit detection, [F] missiles (6) on radar lock (orange box), target drones + ground sites on real terrain, respawn after 45 s, kills announced.
   Chase camera rides with the aircraft (always centred; world moves at true relative speed).
+- 2026-11-01: 2 players on ONE screen (user: no split screen): [P] / 2 PLAYERS button; P2 flies with the second controller (same flight equations, own aircraft, gun + missiles on the range); shared camera frames both aircraft and pulls back as they separate; P1/P2 tags + separation on screen, edge arrows when off screen; P2 HUD bottom-right.

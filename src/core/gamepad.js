@@ -65,10 +65,13 @@ function readPad(gp) {
 }
 
 export class GamepadInput {
-  constructor() {
+  // slot: null = whichever pad has the newest input (one player); 0 / 1 = first / second connected pad (two players)
+  constructor(slot = null) {
+    this.slot = slot;
     this.activeKey = null;  // index of the pad currently driving the aircraft
     this.prevButtons = [];
     this.announced = new Set();
+    if (slot !== null) return; // the one-player instance owns the connect / disconnect messages
     window.addEventListener('gamepadconnected', (e) => this.announce(e.gamepad, true));
     window.addEventListener('gamepaddisconnected', (e) => {
       this.announced.delete(e.gamepad.index);
@@ -86,6 +89,11 @@ export class GamepadInput {
   // The same controller can appear twice (USB + Bluetooth): use the one with the newest input
   pickPad() {
     if (!navigator.getGamepads) return null;
+    if (this.slot !== null) {
+      const pads = [...navigator.getGamepads()].filter((gp) => gp && gp.connected).sort((a, b) => a.index - b.index);
+      pads.forEach((gp) => this.announce(gp, true));
+      return pads[this.slot] || null;
+    }
     let best = null;
     for (const gp of navigator.getGamepads()) {
       if (!gp || !gp.connected) continue;
