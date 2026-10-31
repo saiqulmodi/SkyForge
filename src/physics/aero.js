@@ -303,9 +303,10 @@ export function getFlightProfile() {
 // ==========================================
 const _discUp = new THREE.Vector3();
 
-export function stepRotorcraft(s, input, p, dt) {
+// groundY: terrain height under the aircraft (world y), 0 on the VOBL field
+export function stepRotorcraft(s, input, p, dt, groundY = 0) {
   const tilt = p.maxCyclicTilt;
-  const onGround = s.pos.y <= p.groundHeight + 0.01;
+  const onGround = s.pos.y <= groundY + p.groundHeight + 0.01;
 
   // Cyclic tilts the disc towards a target attitude; pedals yaw the airframe
   const targetPitch = onGround ? Math.max(0, input.pitch * tilt * 0.2) : input.pitch * tilt;

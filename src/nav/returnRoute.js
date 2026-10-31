@@ -2,16 +2,18 @@
 // World axes: -Z = east, +Z = west, -X = north, +X = south. Runway 09L lands towards -Z (heading 090),
 // threshold at z = +2000 on x = 0. The route mirrors a real straight-in arrival:
 //   JOIN (only when the aircraft is not already west of the field near the centreline)
-//   -> IF  (intermediate fix, 11 km before the threshold, 1,800 ft)
-//   -> FAF (final approach fix, 6 km, on the 3 degree glide path ~1,000 ft)
+//   -> IF  (intermediate fix, 11 km before the threshold, 1,800 ft above the field)
+//   -> FAF (final approach fix, 6 km, on the 3 degree glide path ~1,000 ft above the field)
 //   -> RWY 09L threshold (touchdown aim 400 m beyond)
+// Waypoint altitudes are feet above sea level (VOBL field elevation 3,002 ft).
 const THRESHOLD_Z = 2000;
 const FT_PER_M = 3.28084;
+const FIELD_FT = 3002;
 const GLIDE = Math.tan(3 * Math.PI / 180);
 const CAPTURE_M = 700; // waypoint passed when this close (horizontal)
 
-function waypoint(name, x, z, altFt) {
-  return { name, x, z, altFt };
+function waypoint(name, x, z, aboveFieldFt) {
+  return { name, x, z, altFt: Math.round((FIELD_FT + aboveFieldFt) / 10) * 10 };
 }
 
 // Compass bearing (deg, 0 = north) from a to b in world x/z
@@ -48,8 +50,9 @@ export class NavComputer {
     this.index = 0;
   }
 
-  // state: sim state; headingDeg: current heading. Returns nav data for map / MFD / HUD, or null on the ground.
-  update(state, headingDeg, groundHeight) {
+  // state: sim state; headingDeg: current heading; altFt: altitude above sea level.
+  // Returns nav data for map / MFD / HUD, or null on the ground.
+  update(state, headingDeg, altFt) {
     if (state.onGround && state.ias < 40) {
       // Parked or rolled out: the next take-off plans a fresh route home
       if (this.route && this.index >= this.route.length) this.route = null;
@@ -72,7 +75,6 @@ export class NavComputer {
     let turn = brg - headingDeg;
     turn = ((turn + 540) % 360) - 180;
     const gsMs = Math.max(1, Math.hypot(state.vel.x, state.vel.z));
-    const altFt = (state.pos.y - groundHeight) * FT_PER_M;
 
     // Remaining route length (for the total ETA)
     let remaining = d;

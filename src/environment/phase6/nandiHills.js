@@ -48,7 +48,14 @@ export function nandiHeightAt(wx, wz) {
   return Math.max(0, h * Math.min(ex, ez));
 }
 
-export function createNandiHills(scene) {
+// Terrain overlay: detailed massif height where this grid covers the ground, otherwise null
+export function nandiOverlay(wx, wz) {
+  if (Math.abs(wx - cx) > SIZE_X / 2 || Math.abs(wz - cz) > SIZE_Z / 2) return null;
+  return nandiHeightAt(wx, wz) + 3; // matches the mesh offset below
+}
+
+// baseHeightAt(x, z): the real ground under the massif (world y); the detail rises from it
+export function createNandiHills(scene, baseHeightAt = () => 0) {
   const geometry = new THREE.PlaneGeometry(SIZE_X, SIZE_Z, SEG_X, SEG_Z);
   geometry.rotateX(-Math.PI / 2);
   const pos = geometry.attributes.position;
@@ -63,7 +70,7 @@ export function createNandiHills(scene) {
     const wx = pos.getX(i) + cx;
     const wz = pos.getZ(i) + cz;
     const h = nandiHeightAt(wx, wz);
-    pos.setY(i, h);
+    pos.setY(i, Math.max(baseHeightAt(wx, wz), h));
 
     // Bare granite high up, scrub on the flanks, farmland at the foot
     if (h > 330) c.copy(granite).lerp(graniteDark, (ridgeNoise(wx * 5, wz * 5) + 1) * 0.3);
@@ -75,7 +82,7 @@ export function createNandiHills(scene) {
   geometry.computeVertexNormals();
 
   const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, flatShading: true }));
-  mesh.position.set(cx, 0.3, cz); // a touch above the base terrain so the plain edge never z-fights
+  mesh.position.set(cx, 3, cz); // above the coarser streamed terrain so the two surfaces never z-fight
   mesh.name = 'nandi_hills';
   scene.add(mesh);
   return mesh;

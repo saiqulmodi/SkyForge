@@ -17,6 +17,14 @@ export function geoToWorld(lat, lon) {
   };
 }
 
+// world x, z -> { lat, lon }
+export function worldToGeo(x, z) {
+  return {
+    lat: ORIGIN.lat - x / M_PER_DEG_LAT,
+    lon: ORIGIN.lon - z / M_PER_DEG_LON
+  };
+}
+
 // Real places (lat, lon, elevation AMSL in metres where it matters)
 export const PLACES = {
   nandiHillsSummit: { lat: 13.3702, lon: 77.6835, elev: 1478 },

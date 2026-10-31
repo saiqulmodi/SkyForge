@@ -25,7 +25,8 @@ const LAKES = [
   { lat: 13.1000, lon: 77.5850, r: 500 }   // Yelahanka
 ];
 
-export function createBengaluruCity(scene) {
+// groundAt(x, z): ground height (world y); buildings, lakes and the AFS runway sit on it
+export function createBengaluruCity(scene, groundAt = () => 0) {
   const group = new THREE.Group();
   group.name = 'bengaluru_city';
   const rand = rng(560001); // Bengaluru PIN
@@ -46,7 +47,8 @@ export function createBengaluruCity(scene) {
       const core = 1 - r / c.radius;
       const h = c.minH + (c.maxH - c.minH) * Math.pow(rand(), c.tallBias) * (0.35 + 0.65 * core);
       const w = 14 + rand() * 30;
-      dummy.position.set(centre.x + Math.cos(a) * r, 0, centre.z + Math.sin(a) * r);
+      const bx = centre.x + Math.cos(a) * r, bz = centre.z + Math.sin(a) * r;
+      dummy.position.set(bx, groundAt(bx, bz) - 3, bz); // footing slightly sunk on sloping ground
       dummy.rotation.set(0, Math.round(rand() * 4) * 0.12, 0);
       dummy.scale.set(w, h, w * (0.6 + rand() * 0.8));
       dummy.updateMatrix();
@@ -65,7 +67,7 @@ export function createBengaluruCity(scene) {
     const lake = new THREE.Mesh(new THREE.CircleGeometry(l.r, 28), water);
     lake.rotation.x = -Math.PI / 2;
     lake.scale.set(1, 0.7, 1);
-    lake.position.set(p.x, 0.2, p.z);
+    lake.position.set(p.x, groundAt(p.x, p.z) + 2.5, p.z);
     group.add(lake);
   });
 
@@ -73,7 +75,7 @@ export function createBengaluruCity(scene) {
   const afs = geoToWorld(PLACES.yelahankaAfs.lat, PLACES.yelahankaAfs.lon);
   const afsRunway = new THREE.Mesh(new THREE.PlaneGeometry(45, 2900), new THREE.MeshStandardMaterial({ color: 0x262626, roughness: 0.9 }));
   afsRunway.rotation.x = -Math.PI / 2;
-  afsRunway.position.set(afs.x, 0.06, afs.z);
+  afsRunway.position.set(afs.x, groundAt(afs.x, afs.z) + 2.5, afs.z);
   group.add(afsRunway);
 
   scene.add(group);

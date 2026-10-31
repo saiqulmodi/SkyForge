@@ -344,7 +344,8 @@
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
     Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach RWY 09L | [M] Map size | [N] Re-plan route home<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
-    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map
+    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map<br>
+    <span style="opacity:0.6">Terrain: SRTM, GMTED2010, ETOPO1 via Mapzen Terrain Tiles (AWS Open Data)</span>
   </div>
 
   <div id="control-deck">
@@ -402,6 +403,9 @@
     import { initPhase6Environment } from './src/environment/phase6/index.js';
     import { NavComputer } from './src/nav/returnRoute.js';
     import { MovingMap } from './src/nav/movingMap.js';
+    import { Terrain, SEA_LEVEL_Y } from './src/world/terrain.js';
+    // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
+    const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
     // ==========================================
     // 1. PROCEDURAL AUDIO SYNTHESIZER
@@ -592,31 +596,11 @@
     // ==========================================
     // 3. TERRAIN, NANDI HILLS & RUNWAYS
     // ==========================================
-    // Flat Deccan plateau at field elevation (y = 0 = 915 m AMSL), 90 x 90 km so Nandi Hills (~19 km N)
-    // and Bengaluru city (~25 km SW) fit. Nandi Hills itself is the Phase 6 elevation grid.
-    const terrainSize = 90000;
-    const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, 128, 128);
-    terrainGeo.rotateX(-Math.PI / 2);
-    const posAttr = terrainGeo.attributes.position;
-    const colors = [];
-    const colorGrass = new THREE.Color(0x3e5229);
-    const colorFarm = new THREE.Color(0x6b6a3a);
-    const colorDry = new THREE.Color(0x7a6a4a);
-
-    for (let i = 0; i < posAttr.count; i++) {
-      const x = posAttr.getX(i);
-      const z = posAttr.getZ(i);
-      // Farmland patchwork (red-soil fields, scrub, green plots)
-      const n = Math.sin(x * 0.0011) * Math.cos(z * 0.0013) + Math.sin((x + z) * 0.0007) * 0.6;
-      const vertexColor = colorGrass.clone().lerp(n > 0.4 ? colorDry : colorFarm, Math.min(1, Math.abs(n) * 0.6));
-      colors.push(vertexColor.r, vertexColor.g, vertexColor.b);
-    }
-    terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    terrainGeo.computeVertexNormals();
-
-    const terrainMesh = new THREE.Mesh(terrainGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }));
-    terrainMesh.receiveShadow = true;
-    scene.add(terrainMesh);
+    // Real South India terrain and coastline (lat 8-19.5 N, lon 74-85 E), streamed around the aircraft.
+    // y = 0 is VOBL field elevation (915 m AMSL); sea level is y = -915. The VOBL area is flattened.
+    const terrain = await Terrain.load('./assets/terrain/south_india');
+    scene.add(terrain.group);
+    terrain.prime(0, 1800);
 
     // VOBL Runway 09L
     const runway = new THREE.Mesh(
@@ -638,7 +622,7 @@
 
     // Phase 6: real Bengaluru scenery - Nandi Hills, VOBL terminals / ATC / hangars, runway markings,
     // PAPI, MALSR, NH44 highway grid, Bengaluru city (src/environment/phase6)
-    const phase6 = initPhase6Environment(scene);
+    const phase6 = initPhase6Environment(scene, terrain);
     const navComputer = new NavComputer(); // return-to-land route, planned after each take-off
     const movingMap = new MovingMap();     // north-up map overlay (M = size)
 
@@ -669,7 +653,7 @@
       prevOnGround: true,
       apMaster: false,
       altHold: false,
-      targetAlt: 3000
+      targetAlt: 5000 // ft AMSL
     };
     window.skyforgeState = state; // console check: position, speed, throttle
 
@@ -754,15 +738,17 @@
       const fpm = Math.round(sinkMs * 196.85);
       const rollDeg = Math.abs(state.rot.z) * 180 / Math.PI;
       const rwy = phase6.runwayAt(state.pos.x, state.pos.z);
+      const onHigherGround = terrain.groundY(state.pos.x, state.pos.z) > 30; // hillside, not a field
       if (profile.rotorcraft) {
         if (fpm > 800) crash(`HARD LANDING ${fpm} FPM`);
+        else if (state.ias > 40) crash(onHigherGround ? 'TERRAIN IMPACT' : `GROUND CONTACT AT ${Math.round(state.ias)} KT`);
         else flightMsg(`LANDED - ${fpm} FPM${rwy ? ' on RWY ' + rwy : ''}`, '#4ade80');
         return;
       }
       if (fpm > 900) return crash(`HARD LANDING ${fpm} FPM`);
       if (rollDeg > 15) return crash(`WINGTIP STRIKE (${Math.round(rollDeg)} DEG BANK)`);
       if (state.rot.x < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
-      if (!rwy && state.ias > 40) return crash('OFF-RUNWAY TOUCHDOWN');
+      if (!rwy && state.ias > 40) return crash(onHigherGround ? 'TERRAIN IMPACT' : 'OFF-RUNWAY TOUCHDOWN');
       const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
       const fromThreshold = Math.round(Math.abs((state.pos.z > 0 ? phase6.runway.halfLength : -phase6.runway.halfLength) - state.pos.z));
       flightMsg(`${grade} LANDING - ${fpm} FPM, RWY ${rwy}, ${fromThreshold} M past threshold. Brakes: B / L3`, '#4ade80', 7000);
@@ -834,7 +820,7 @@
       if (state.onGround) return;
       state.altHold = !state.altHold;
       if (state.altHold) {
-        state.targetAlt = Math.max(500, Math.round((state.pos.y * 3.28084) / 100) * 100);
+        state.targetAlt = Math.max(500, Math.round(amslFt(state.pos.y) / 100) * 100);
       }
       updateAPReadout();
     };
@@ -1003,7 +989,7 @@
 
       ctx.fillStyle = '#38bdf8';
       ctx.textAlign = 'right';
-      ctx.fillText(`${Math.max(0, Math.round(state.pos.y * 3.28084))} FT`, cx + 80, cy - 55);
+      ctx.fillText(`${Math.max(0, Math.round(amslFt(state.pos.y)))} FT`, cx + 80, cy - 55);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = state.isAfterburner ? '#f59e0b' : '#f8fafc';
@@ -1082,7 +1068,7 @@
 
       if (state.apMaster && !state.onGround && !profile.rotorcraft) {
         if (state.altHold) {
-          const altFt = state.pos.y * 3.28084;
+          const altFt = amslFt(state.pos.y);
           const altErr = state.targetAlt - altFt;
           pIn = Math.max(-0.6, Math.min(0.6, altErr * 0.002));
         }
@@ -1095,11 +1081,12 @@
       state.mach = state.ias / 661.47;
 
       const braking = !!(keys['KeyB'] || (pad && pad.brake));
+      const terrainY = terrain.groundY(state.pos.x, state.pos.z); // real ground under the aircraft (0 at VOBL)
 
       if (profile.rotorcraft) {
         // Rotorcraft branch (aero.js): collective = lift, cyclic = disc tilt, pedals = yaw
         state.prevOnGround = state.onGround;
-        stepRotorcraft(state, { pitch: pIn, roll: rIn, yaw: yIn }, profile, dt);
+        stepRotorcraft(state, { pitch: pIn, roll: rIn, yaw: yIn }, profile, dt, terrainY);
       } else {
         // Fixed-wing: per-aircraft numbers come from the active profile
         const vr = profile.vr;
@@ -1111,7 +1098,7 @@
         state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3) * dt;
 
         state.prevOnGround = state.onGround;
-        const groundHeight = profile.groundHeight;
+        const groundHeight = terrainY + profile.groundHeight;
         const wheelsDown = state.pos.y <= groundHeight;
 
         // Rudder yaws the nose; in the air, bank turns the aircraft (turn rate = g sin(bank) / v)
@@ -1207,7 +1194,7 @@
         }
       }
 
-      const gLimit = profile.groundHeight;
+      const gLimit = terrainY + profile.groundHeight;
       if (state.pos.y < gLimit) {
         state.pos.y = gLimit;
         state.vel.y = 0;
@@ -1220,18 +1207,17 @@
       // Take-off / landing bookkeeping, Nandi Hills terrain, crash reset
       if (!state.onGround) landing.airTime += dt;
       else if (state.ias < 5) landing.rotateCued = false;
-      const hillHeight = phase6.terrainHeight(state.pos.x, state.pos.z); // 0 on the plateau
-      if (hillHeight > 1 && state.pos.y - profile.groundHeight < hillHeight) crash('TERRAIN - NANDI HILLS');
       if (landing.crashResetAt) {
         state.vel.set(0, 0, 0);
         state.throttle = 0;
         if (performance.now() > landing.crashResetAt) resetToThreshold();
       }
       phase6.update(performance.now(), state.pos);
+      terrain.update(state.pos.x, state.pos.z);
 
       // Return-to-land route + moving map
       const headingNow = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
-      const navData = navComputer.update(state, headingNow, profile.groundHeight);
+      const navData = navComputer.update(state, headingNow, amslFt(state.pos.y));
       movingMap.draw(state, navData, headingNow, performance.now());
 
       fleetContainer.position.copy(state.pos);
@@ -1268,7 +1254,7 @@
       cockpit.update({
         dt,
         iasKt: state.ias,
-        altFt: state.pos.y * 3.28084,
+        altFt: amslFt(state.pos.y),
         mach: state.mach,
         gLoad,
         pitch: state.rot.x,

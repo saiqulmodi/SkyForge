@@ -6,7 +6,7 @@ import { geoToWorld, NH44_ROUTE, ROADS } from './geo.js';
 // and Hennur-Bagalur road. NH44 carries moving traffic in both directions.
 
 // Polyline of [lat, lon] -> world points resampled every `step` metres
-function routePoints(route, step = 150) {
+function routePointsFlat(route, step = 150) {
   const pts = route.map(([lat, lon]) => { const w = geoToWorld(lat, lon); return new THREE.Vector3(w.x, 0, w.z); });
   const out = [pts[0].clone()];
   for (let i = 1; i < pts.length; i++) {
@@ -25,7 +25,7 @@ function ribbon(points, width, y, mat) {
   points.forEach((p, i) => {
     const prev = points[Math.max(0, i - 1)], next = points[Math.min(points.length - 1, i + 1)];
     side.set(next.z - prev.z, 0, -(next.x - prev.x)).normalize().multiplyScalar(width / 2);
-    pos.push(p.x + side.x, y, p.z + side.z, p.x - side.x, y, p.z - side.z);
+    pos.push(p.x + side.x, p.y + y, p.z + side.z, p.x - side.x, p.y + y, p.z - side.z);
     if (i > 0) {
       const a = (i - 1) * 2;
       idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -57,7 +57,9 @@ function pointAt(points, cum, d, out, dirOut) {
   dirOut.copy(points[i]).sub(points[i - 1]).normalize();
 }
 
-export function createNH44Expressway(scene) {
+// groundAt(x, z): ground height (world y); roads follow it, a little above so the coarser terrain never covers them
+export function createNH44Expressway(scene, groundAt = () => 0) {
+  const routePoints = (route) => routePointsFlat(route).map((p) => { p.y = groundAt(p.x, p.z); return p; });
   const group = new THREE.Group();
   group.name = 'highway_grid';
 
@@ -66,11 +68,11 @@ export function createNH44Expressway(scene) {
   const minorMat = new THREE.MeshStandardMaterial({ color: 0x3b3d3f, roughness: 0.95, side: THREE.DoubleSide });
 
   const nh44 = routePoints(NH44_ROUTE);
-  group.add(ribbon(nh44, 34, 0.25, asphalt));
-  group.add(ribbon(nh44, 3, 0.32, median));
-  group.add(ribbon(routePoints(ROADS.airportAccess), 24, 0.25, asphalt));
-  group.add(ribbon(routePoints(ROADS.devanahalliDoddaballapur), 14, 0.22, minorMat));
-  group.add(ribbon(routePoints(ROADS.hennurBagalur), 12, 0.22, minorMat));
+  group.add(ribbon(nh44, 34, 2.5, asphalt));
+  group.add(ribbon(nh44, 3, 2.6, median));
+  group.add(ribbon(routePoints(ROADS.airportAccess), 24, 2.5, asphalt));
+  group.add(ribbon(routePoints(ROADS.devanahalliDoddaballapur), 14, 2.4, minorMat));
+  group.add(ribbon(routePoints(ROADS.hennurBagalur), 12, 2.4, minorMat));
 
   // NH44 traffic: instanced vehicles, northbound and southbound carriageways
   const cum = measure(nh44);
@@ -104,7 +106,7 @@ export function createNH44Expressway(scene) {
         if (!north) d = length - d; // southbound runs the other way
         pointAt(nh44, cum, d, p, dir);
         const lane = (north ? 1 : -1) * (5 + (i % 3) * 3.5); // three lanes each side of the median
-        dummy.position.set(p.x + dir.z * lane, 1.1, p.z - dir.x * lane);
+        dummy.position.set(p.x + dir.z * lane, p.y + 3.4, p.z - dir.x * lane);
         dummy.rotation.set(0, Math.atan2(dir.x, dir.z) + (north ? 0 : Math.PI), 0);
         dummy.updateMatrix();
         cars.setMatrixAt(i, dummy.matrix);
