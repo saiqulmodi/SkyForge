@@ -343,7 +343,8 @@
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
     Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down<br>
-    Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)
+    Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
+    Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft
   </div>
 
   <div id="control-deck">
@@ -396,6 +397,7 @@
     import * as THREE from 'three';
     import { FleetManager } from './src/aircraft/FleetManager.js';
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
+    import { GamepadInput } from './src/core/gamepad.js';
 
     // ==========================================
     // 1. PROCEDURAL AUDIO SYNTHESIZER
@@ -827,6 +829,47 @@
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+    // ==========================================
+    // GAME CONTROLLER (right stick = pitch/roll, left stick = throttle/rudder; see src/core/gamepad.js)
+    // ==========================================
+    const gamepad = new GamepadInput();
+    const FLEET_ORDER = ['trainer', 'airliner', 'fighter', 'heli'];
+    let lastGunShotMs = 0;
+
+    const padNote = document.createElement('div');
+    padNote.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10002;padding:6px 12px;font:bold 12px monospace;' +
+      'color:#00ffcc;background:rgba(6,12,18,0.88);border:1px solid rgba(0,255,170,0.4);display:none;';
+    document.body.appendChild(padNote);
+    window.addEventListener('gamepadstatus', (e) => {
+      padNote.textContent = e.detail.connected ? `GAMEPAD CONNECTED: ${e.detail.id.slice(0, 40)}` : 'GAMEPAD DISCONNECTED';
+      padNote.style.display = 'block';
+      clearTimeout(padNote._t);
+      padNote._t = setTimeout(() => { padNote.style.display = 'none'; }, 4000);
+    });
+
+    function handlePadActions(pad) {
+      for (const action of pad.actions) {
+        audio.init();
+        if (action === 'view') window.toggleCameraView();
+        else if (action === 'autopilot') toggleAP();
+        else if (action === 'altHold') toggleAltHold();
+        else if (action === 'altUp') adjustTargetAlt(500);
+        else if (action === 'altDown') adjustTargetAlt(-500);
+        else if (action === 'resetHead') window.lookCockpit('center');
+        else if (action === 'ramp' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias);
+        else if (action === 'prevAircraft' || action === 'nextAircraft') {
+          const step = action === 'nextAircraft' ? 1 : FLEET_ORDER.length - 1;
+          selectAircraft(FLEET_ORDER[(FLEET_ORDER.indexOf(currentAircraft) + step) % FLEET_ORDER.length]);
+        }
+      }
+      // Cross / A held: gun, 10 rounds per second (fighter only, like Space)
+      const now = performance.now();
+      if (pad.fire && currentAircraft === 'fighter' && now - lastGunShotMs > 100) {
+        lastGunShotMs = now;
+        fireTracer();
+      }
+    }
+
     function fireTracer() {
       const tracer = new THREE.Mesh(tracerGeo, tracerMat);
       tracer.position.copy(state.pos).add(new THREE.Vector3(0, 0, -8).applyEuler(state.rot));
@@ -928,12 +971,24 @@
       if (keys['ShiftLeft'] || keys['ShiftRight']) state.throttle = Math.min(1.0, state.throttle + 0.4 * dt);
       if (keys['ControlLeft'] || keys['ControlRight']) state.throttle = Math.max(0.0, state.throttle - 0.4 * dt);
 
+      const pad = gamepad.poll();
+      if (pad) {
+        handlePadActions(pad);
+        state.throttle = Math.max(0.0, Math.min(1.0, state.throttle + pad.throttleRate * 0.4 * dt));
+      }
+
       state.power += (state.throttle * 100 - state.power) * 3.5 * dt;
       state.isAfterburner = (profile.afterburnerThrust !== undefined && state.throttle > 0.70);
 
       let pIn = (keys['KeyS'] ? 1 : 0) - (keys['KeyW'] ? 1 : 0);
       let rIn = (keys['KeyA'] ? -1 : 0) + (keys['KeyD'] ? 1 : 0);
       let yIn = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
+      if (pad) {
+        // Analog sticks add to the keyboard; clamp to full deflection
+        pIn = Math.max(-1, Math.min(1, pIn + pad.pitch));
+        rIn = Math.max(-1, Math.min(1, rIn + pad.roll));
+        yIn = Math.max(-1, Math.min(1, yIn + pad.yaw));
+      }
 
       if (state.apMaster && !state.onGround && !profile.rotorcraft) {
         if (state.altHold) {
