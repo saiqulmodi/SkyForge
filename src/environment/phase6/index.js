@@ -14,7 +14,7 @@ export function initPhase6Environment(scene, terrain) {
   const malsr09L = createApproachLighting(scene, RUNWAY.halfLength, 1);   // approach to 09L from the west
   const malsr27R = createApproachLighting(scene, -RUNWAY.halfLength, -1); // approach to 27R from the east
   const expressway = createNH44Expressway(scene, groundAt);
-  const city = createBengaluruCity(scene, groundAt);
+  const city = createBengaluruCity(scene, groundAt, (x, z) => !terrain.inFlatZone(x, z, 250));
 
   return {
     nandiHills,

@@ -1,17 +1,20 @@
-# SkyForge - South India travel, STAGE 2: large world, real terrain + coast
+# SkyForge - South India travel, STAGE 3: airports
 
 STATUS: DONE
 
-User said "go" for stage 2 and "yes" (2026-10-31) to downloading 30 AWS Terrain Tiles (terrarium z7, x 90-94,
-y 56-61, ~2-3 MB) into the scratchpad. Game must stay under 20 MB. Phased: finish stage 2, commit, wait for "go".
-World: origin = VOBL runway 09L/27R centre, y = 0 = 915 m AMSL; -Z east, +Z west, -X north, +X south.
+User said "go" for stage 3 and "yes" (2026-10-31) to downloading OurAirports airports.csv (12.8 MB) +
+runways.csv (4.0 MB) into the scratchpad. Ship only assets/airports/south_india_airports.json (~20 KB).
+Game must stay under 20 MB. Phased: finish stage 3, commit, wait for "go" (stage 4 = route between airports).
+World: origin = VOBL 09L/27R centre, y = 0 = 915 m AMSL; -Z east, +Z west, -X north, +X south.
 
 ## Steps
-- [x] Download tiles to scratchpad/terrain_tiles (data only), build assets/terrain/south_india.png (8-bit: 0 = sea, land = 1 + h/11 m) + JSON bounds; tools/build_heightmap.py kept in repo
-- [x] src/world/terrain.js: load heightmap, heightAt(x, z) (world y), streamed chunks (20 km, ring around the aircraft), vertex colours, sea plane at y = -915, VOBL area flattened to y = 0, Nandi Hills detail kept
-- [x] index.html: replace flat plateau with streamed terrain; ground contact = terrain height + gear (fixed-wing + rotorcraft); Phase 6 roads / city / lakes draped on terrain; credit line
-- [x] Test: no console errors, FPS, take-off/landing at VOBL unchanged, fly over Ghats / coast screenshot, size check; commit "Stage 2: real South India terrain and coastline"; STATUS: DONE
+- [x] tools/build_airports.py -> assets/airports/south_india_airports.json (scheduled-service airports in KA/TN/KL/AP/TG/PY, paved runways >= 1500 m, runway end lat/lon, heading, length, width, elevation)
+- [x] src/world/airports.js: load JSON, runway registry (incl. VOBL's two runways), runwayAt(x, z, heading), terrain flatten zones per airport, scenery streamed within ~45 km
+- [x] Generic airport scenery: oriented runway, markings, edge lights, MALSR + PAPI both ends, taxiway, apron, terminal, tower (helpers shared with voblAirport.js)
+- [x] Active runway: take-off / approach / route home use the chosen runway (not just VOBL 09L); airport picker in the control deck; touchdown rating on any runway
+- [x] Moving map shows other airports' runways + ICAO
+- [x] Test several airports (take-off, approach, landing), no console errors, FPS, size; commit "Stage 3: South India airports"; STATUS: DONE
 
 ## Log
-- 2026-10-31: stage 2 started.
-- 2026-10-31: stage 2 done. Heightmap 218 KB (1056x1104, ~1.16 km; VOBL 902 m, HYD 616, MAA 11, Ooty 2266). Streamed 24 km chunks (7x7), sea at y -915, VOBL flattened, Nandi detail on top. Altitudes now AMSL everywhere (VOBL 3,002 ft). Tests: 60 FPS at VOBL, landing NORMAL 281 fpm, heli settles on Ooty hills 2302 m, fighter into Nilgiris = TERRAIN IMPACT + reset, Chennai coast + Bay of Bengal, Mangaluru coast; no console errors. Waiting for go on stage 3 (airports).
+- 2026-10-31: stage 3 started.
+- 2026-10-31: stage 3 done. 29 airports (8.7 KB JSON). runwayAt verified (VOMM 07/25, VOTV 14, VOCI 27, VOHS 09L, VOBL, VOML 24; abeam = none). Spawn VOMM 07 at field 56 ft, scenery + PAPI + crossing 12/30 visible; approach VOMM 07 / VOTV 14 with route home to the chosen runway; chase camera snaps after jumps. Browser window was throttled to ~1.6 FPS (stage-2 build identical there) - FPS not re-measured. Waiting for go on stage 4.

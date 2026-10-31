@@ -50,6 +50,7 @@ export class Terrain {
     this.meta = meta;
     this.grey = grey;
     this.overlays = []; // functions (x, z) -> detailed height or null (e.g. Nandi Hills mesh)
+    this.flatZones = []; // airport runway areas levelled to field elevation (see addFlatZone)
     this.chunks = new Map();
     this.group = new THREE.Group();
     this.group.name = 'south_india_terrain';
@@ -77,16 +78,41 @@ export class Terrain {
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
   }
 
-  // Base ground (world y) from the heightmap, with the VOBL area flattened to y = 0
+  // Level a rotated rectangle (runway + approach lights + apron) to height y, blending out over `blend` m.
+  // zone: { cx, cz, ux, uz (unit runway direction), halfLen, halfWid, y, blend }
+  addFlatZone(zone) {
+    zone.reach = zone.halfLen + zone.halfWid + zone.blend;
+    this.flatZones.push(zone);
+  }
+
+  // Distance (m) from x, z to the flat part of a zone; 0 inside
+  zoneDistance(zn, x, z) {
+    const dx = x - zn.cx, dz = z - zn.cz;
+    const along = dx * zn.ux + dz * zn.uz;
+    const cross = -dx * zn.uz + dz * zn.ux;
+    return Math.hypot(Math.max(0, Math.abs(along) - zn.halfLen), Math.max(0, Math.abs(cross) - zn.halfWid));
+  }
+
+  // True when x, z is on (or within `margin` m of) a levelled airport area
+  inFlatZone(x, z, margin = 0) {
+    return this.flatZones.some((zn) => Math.abs(x - zn.cx) + Math.abs(z - zn.cz) < zn.reach * 1.5 && this.zoneDistance(zn, x, z) <= margin);
+  }
+
+  // Base ground (world y) from the heightmap, with VOBL and every airport levelled to field elevation
   baseHeightAt(x, z) {
     const { lat, lon } = worldToGeo(x, z);
-    const y = this.elevationAt(lat, lon) - AIRPORT_ELEVATION_M;
+    let y = this.elevationAt(lat, lon) - AIRPORT_ELEVATION_M;
     const f = FLAT_BOX;
     const dx = Math.max(f.xMin - x, 0, x - f.xMax);
     const dz = Math.max(f.zMin - z, 0, z - f.zMax);
     const d = Math.hypot(dx, dz);
-    if (d >= f.blend) return y;
-    return y * smoothstep(d / f.blend);
+    if (d < f.blend) y *= smoothstep(d / f.blend);
+    for (const zn of this.flatZones) {
+      if (Math.abs(x - zn.cx) + Math.abs(z - zn.cz) > zn.reach * 1.5) continue;
+      const dz2 = this.zoneDistance(zn, x, z);
+      if (dz2 < zn.blend) y = zn.y + (y - zn.y) * smoothstep(dz2 / zn.blend);
+    }
+    return y;
   }
 
   // Ground surface used for contact (base ground or a detailed overlay such as Nandi Hills)

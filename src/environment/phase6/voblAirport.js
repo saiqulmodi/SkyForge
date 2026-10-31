@@ -17,7 +17,7 @@ export function runwayAt(x, z) {
   return null;
 }
 
-function flatPlane(w, l, mat, x, y, z) {
+export function flatPlane(w, l, mat, x, y, z) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, l), mat);
   m.rotation.x = -Math.PI / 2;
   m.position.set(x, y, z);
@@ -25,7 +25,7 @@ function flatPlane(w, l, mat, x, y, z) {
 }
 
 // White runway designator painted on the surface, readable from an aircraft landing towards `headingSign` Z
-function designator(text, z, headingSign) {
+export function designator(text, z, headingSign) {
   const canvas = document.createElement('canvas');
   canvas.width = 256; canvas.height = 512;
   const ctx = canvas.getContext('2d');
@@ -47,7 +47,7 @@ function designator(text, z, headingSign) {
 
 // Threshold piano keys, designator, touchdown-zone bars and aiming point for one runway end.
 // thresholdZ: where the runway starts for this landing direction; dir: -1 lands towards -Z (09L), +1 towards +Z (27R)
-function runwayEndMarkings(group, paint, thresholdZ, dir, text) {
+export function runwayEndMarkings(group, paint, thresholdZ, dir, text) {
   const inward = dir; // +distance along the landing direction
   for (let i = 0; i < 12; i++) {
     const x = -19.8 + i * 3.6 + (i >= 6 ? 0 : 0);
@@ -66,7 +66,7 @@ function runwayEndMarkings(group, paint, thresholdZ, dir, text) {
 }
 
 // PAPI: 4 lights left of the touchdown point; each turns white above its angle, red below
-function createPapi(group, touchdownZ, sideX, dir) {
+export function createPapi(group, touchdownZ, sideX, dir) {
   const angles = [3.5, 3.1667, 2.8333, 2.5]; // nearest the runway first
   const positions = new Float32Array(12);
   const colors = new Float32Array(12);
@@ -102,7 +102,7 @@ function createPapi(group, touchdownZ, sideX, dir) {
   };
 }
 
-function edgeLights(group, halfWidth, halfLength, offsetX) {
+export function edgeLights(group, halfWidth, halfLength, offsetX) {
   const pos = [];
   const col = [];
   for (let z = -halfLength; z <= halfLength; z += 60) {

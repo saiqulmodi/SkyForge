@@ -5,13 +5,15 @@ import { RUNWAY, SOUTH_RUNWAY_X } from '../environment/phase6/voblAirport.js';
 // aircraft. Screen: up = north (-X world), right = east (-Z world). Redrawn at 10 Hz.
 const MAP_HZ = 10;
 const SIZES = { small: 260, large: 560 };
-const SCALES_M = [2000, 5000, 10000, 20000, 40000, 80000]; // half-width of the shown area
+const SCALES_M = [2000, 5000, 10000, 20000, 40000, 80000, 160000, 320000, 640000]; // half-width shown
 
 const toLine = (route) => route.map(([lat, lon]) => geoToWorld(lat, lon));
 
 export class MovingMap {
   constructor() {
     this.size = 'small';
+    this.airports = null;
+    this.home = { icao: 'VOBL', ident: '09L', thrX: 0, thrZ: 2000 };
     this.canvas = document.createElement('canvas');
     this.canvas.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10001;border:1px solid rgba(0,255,170,0.45);' +
       'background:rgba(6,12,18,0.82);border-radius:6px;pointer-events:none;';
@@ -29,6 +31,10 @@ export class MovingMap {
     this.t1 = geoToWorld(PLACES.terminal1.lat, PLACES.terminal1.lon);
     this.t2 = geoToWorld(PLACES.terminal2.lat, PLACES.terminal2.lon);
   }
+
+  // airports: Airports registry (src/world/airports.js); home: the destination runway end
+  setAirports(airports) { this.airports = airports; }
+  setHome(end) { this.home = end; }
 
   applySize() {
     // Fit the window height (the control deck takes ~90 px at the bottom)
@@ -50,9 +56,10 @@ export class MovingMap {
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const cx = W / 2, cy = (H - 54) / 2; // guidance box takes the bottom 54 px
 
-    // Centre between the aircraft and the airport; range fits both plus the next waypoint
-    const midX = state.pos.x * 0.5, midZ = state.pos.z * 0.5;
-    const pts = [state.pos, { x: 0, z: 0 }];
+    // Centre between the aircraft and the destination runway; range fits both plus the next waypoint
+    const home = { x: this.home.thrX, z: this.home.thrZ };
+    const midX = (state.pos.x + home.x) / 2, midZ = (state.pos.z + home.z) / 2;
+    const pts = [state.pos, home];
     if (nav && !nav.complete) pts.push(nav.route[nav.index]);
     const need = Math.max(...pts.map((p) => Math.max(Math.abs(p.x - midX), Math.abs(p.z - midZ)))) * 1.1 + 1500;
     const half = SCALES_M.find((s) => s >= need) || SCALES_M[SCALES_M.length - 1];
@@ -83,13 +90,17 @@ export class MovingMap {
     poly(this.nh44, 'rgba(250,204,21,0.55)', 2);
     this.roads.forEach((r) => poly(r, 'rgba(250,204,21,0.3)', 1));
 
-    // Runways (drawn at least 3 px wide so they stay visible zoomed out) and terminals
-    ctx.strokeStyle = '#e5e7eb';
+    // Runways of every airport (at least 3 px wide so they stay visible zoomed out), ICAO labels, terminals
     ctx.lineWidth = Math.max(3, RUNWAY.width * k);
-    [0, SOUTH_RUNWAY_X].forEach((rx) => {
+    const runways = this.airports ? this.airports.runways : [
+      { ax: 0, az: RUNWAY.halfLength, bx: 0, bz: -RUNWAY.halfLength },
+      { ax: SOUTH_RUNWAY_X, az: RUNWAY.halfLength, bx: SOUTH_RUNWAY_X, bz: -RUNWAY.halfLength }
+    ];
+    runways.forEach((rw) => {
+      ctx.strokeStyle = rw.icao === this.home.icao ? '#ffffff' : '#9ca3af';
       ctx.beginPath();
-      ctx.moveTo(sx(rx, RUNWAY.halfLength), sy(rx, RUNWAY.halfLength));
-      ctx.lineTo(sx(rx, -RUNWAY.halfLength), sy(rx, -RUNWAY.halfLength));
+      ctx.moveTo(sx(rw.ax, rw.az), sy(rw.ax, rw.az));
+      ctx.lineTo(sx(rw.bx, rw.bz), sy(rw.bx, rw.bz));
       ctx.stroke();
     });
     ctx.fillStyle = '#38bdf8';
@@ -97,9 +108,15 @@ export class MovingMap {
 
     // Labels
     ctx.font = '10px monospace';
-    ctx.fillStyle = '#cbd5e1';
     ctx.textAlign = 'left';
-    ctx.fillText('VOBL 09L', sx(0, RUNWAY.halfLength) + 5, sy(0, RUNWAY.halfLength) - 6);
+    if (this.airports) {
+      this.airports.list.forEach((a) => {
+        const px = sx(a.x, a.z), py = sy(a.x, a.z);
+        if (px < -40 || px > W + 40 || py < -20 || py > H) return;
+        ctx.fillStyle = a.icao === this.home.icao ? '#ffffff' : '#cbd5e1';
+        ctx.fillText(a.icao, px + 6, py - 6);
+      });
+    }
     ctx.fillStyle = '#d6a35c';
     ctx.fillText('NANDI HILLS', sx(this.nandi.x, this.nandi.z) + 8, sy(this.nandi.x, this.nandi.z));
     ctx.fillStyle = '#facc15';
@@ -178,7 +195,7 @@ export class MovingMap {
       ctx.fillText(`${turnTxt} | ${altTxt}`, 8, H - 20);
       ctx.fillStyle = '#94a3b8';
       ctx.font = '10px monospace';
-      ctx.fillText(`RWY 09L in ~${tMins} min | [N] re-plan`, 8, H - 6);
+      ctx.fillText(`${nav.destination} in ~${tMins} min | [N] re-plan`, 8, H - 6);
     }
   }
 }

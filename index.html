@@ -342,7 +342,7 @@
   <div id="ui-overlay">
     <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
-    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach RWY 09L | [M] Map size | [N] Re-plan route home<br>
+    Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route home<br>
     Fighter: Throttle > 70% engages STAGE 2 AFTERBURNER (Mach 1.0 -> Mach 2.5)<br>
     Gamepad: Right stick pitch/roll | Left stick throttle + rudder | L1/R1 rudder | L2/R2 throttle | X/A gun | O/B ramp | &#9633;/X AP | &#9651;/Y view | D-pad &#8597; alt, &#8596; aircraft | L3 brakes | Options approach | Touchpad map<br>
     <span style="opacity:0.6">Terrain: SRTM, GMTED2010, ETOPO1 via Mapzen Terrain Tiles (AWS Open Data)</span>
@@ -363,7 +363,17 @@
         <div class="btn-grid">
           <button id="btn-cam" onclick="toggleCameraView()" class="active">VIEW: COCKPIT [C]</button>
           <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
-          <button onclick="startApproach()">APPROACH 09L [L]</button>
+          <button onclick="startApproach()">APPROACH [L]</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
+      <b>AIRPORT (SOUTH INDIA)</b>
+      <select id="apt-select" onchange="selectRunway(this.value)"
+        style="display:block;width:100%;margin-top:4px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;font:11px monospace;padding:2px;"></select>
+      <div class="btn-grid" style="margin-top: 4px;">
+        <button onclick="startAtRunway()">START HERE</button>
+        <button onclick="startApproach()">APPROACH</button>
       </div>
     </div>
 
@@ -404,6 +414,7 @@
     import { NavComputer } from './src/nav/returnRoute.js';
     import { MovingMap } from './src/nav/movingMap.js';
     import { Terrain, SEA_LEVEL_Y } from './src/world/terrain.js';
+    import { Airports } from './src/world/airports.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -600,6 +611,12 @@
     // y = 0 is VOBL field elevation (915 m AMSL); sea level is y = -915. The VOBL area is flattened.
     const terrain = await Terrain.load('./assets/terrain/south_india');
     scene.add(terrain.group);
+
+    // South India airports (real runways from OurAirports); each one levels its ground to field elevation
+    const airports = await Airports.load('./assets/airports/south_india_airports.json');
+    airports.registerFlatZones(terrain);
+    scene.add(airports.group);
+    let activeEnd = airports.end('VOBL', '09L'); // take-off point, approach target and route home
     terrain.prime(0, 1800);
 
     // VOBL Runway 09L
@@ -625,6 +642,9 @@
     const phase6 = initPhase6Environment(scene, terrain);
     const navComputer = new NavComputer(); // return-to-land route, planned after each take-off
     const movingMap = new MovingMap();     // north-up map overlay (M = size)
+    movingMap.setAirports(airports);
+    navComputer.setRunway(activeEnd);
+    movingMap.setHome(activeEnd);
 
     // Tracers
     const tracers = [];
@@ -684,10 +704,15 @@
       updateAPReadout();
     };
 
-    // On the ground at the runway 09L threshold, lined up for take-off
+    // Heading (rot.y) that points the nose along a world direction
+    const yawFor = (dx, dz) => Math.atan2(-dx, -dz);
+
+    // On the ground 200 m past the active runway's threshold, lined up for take-off
     function resetToThreshold() {
-      state.pos.set(0, profile.groundHeight, 1800);
-      state.rot.set(0, 0, 0);
+      const e = activeEnd;
+      state.pos.set(e.thrX + e.dirX * 200, e.y + profile.groundHeight, e.thrZ + e.dirZ * 200);
+      terrain.prime(state.pos.x, state.pos.z);
+      state.rot.set(0, yawFor(e.dirX, e.dirZ), 0);
       state.vel.set(0, 0, 0);
       state.throttle = 0;
       state.power = 0;
@@ -723,7 +748,7 @@
 
     function crash(reason) {
       if (landing.crashResetAt) return;
-      flightMsg(`CRASH: ${reason} - resetting to runway 09L`, '#ef4444', 3500);
+      flightMsg(`CRASH: ${reason} - resetting to ${activeEnd.icao} RWY ${activeEnd.ident}`, '#ef4444', 3500);
       landing.crashResetAt = performance.now() + 3000;
       state.vel.set(0, 0, 0);
       state.throttle = 0;
@@ -737,12 +762,13 @@
       landing.rollout = !profile.rotorcraft;
       const fpm = Math.round(sinkMs * 196.85);
       const rollDeg = Math.abs(state.rot.z) * 180 / Math.PI;
-      const rwy = phase6.runwayAt(state.pos.x, state.pos.z);
+      const headingNowDeg = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
+      const rwy = airports.runwayAt(state.pos.x, state.pos.z, headingNowDeg); // any airport's runway
       const onHigherGround = terrain.groundY(state.pos.x, state.pos.z) > 30; // hillside, not a field
       if (profile.rotorcraft) {
         if (fpm > 800) crash(`HARD LANDING ${fpm} FPM`);
         else if (state.ias > 40) crash(onHigherGround ? 'TERRAIN IMPACT' : `GROUND CONTACT AT ${Math.round(state.ias)} KT`);
-        else flightMsg(`LANDED - ${fpm} FPM${rwy ? ' on RWY ' + rwy : ''}`, '#4ade80');
+        else flightMsg(`LANDED - ${fpm} FPM${rwy ? ` on ${rwy.icao} RWY ${rwy.ident}` : ''}`, '#4ade80');
         return;
       }
       if (fpm > 900) return crash(`HARD LANDING ${fpm} FPM`);
@@ -750,24 +776,25 @@
       if (state.rot.x < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
       if (!rwy && state.ias > 40) return crash(onHigherGround ? 'TERRAIN IMPACT' : 'OFF-RUNWAY TOUCHDOWN');
       const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
-      const fromThreshold = Math.round(Math.abs((state.pos.z > 0 ? phase6.runway.halfLength : -phase6.runway.halfLength) - state.pos.z));
-      flightMsg(`${grade} LANDING - ${fpm} FPM, RWY ${rwy}, ${fromThreshold} M past threshold. Brakes: B / L3`, '#4ade80', 7000);
+      flightMsg(`${grade} LANDING - ${fpm} FPM, ${rwy.icao} RWY ${rwy.ident}, ${rwy.distPast} M past threshold. Brakes: B / L3`, '#4ade80', 7000);
     }
 
-    // Puts the aircraft on a 3 degree final to runway 09L (fixed-wing 8 km out, helicopter 1.5 km)
+    // Puts the aircraft on a 3 degree final to the active runway (fixed-wing 8 km out, helicopter 1.5 km)
     window.startApproach = () => {
+      const e = activeEnd;
       const v = profile.approachKt / 1.94384;
       const dist = profile.rotorcraft ? 1500 : 8000;
-      const aimZ = phase6.runway.halfLength - 400; // aiming point / PAPI abeam
-      state.pos.set(0, profile.groundHeight + dist * Math.tan(GLIDE_RAD), aimZ + dist);
-      state.vel.set(0, -v * Math.sin(GLIDE_RAD), -v * Math.cos(GLIDE_RAD));
+      const aimX = e.thrX + e.dirX * 400, aimZ = e.thrZ + e.dirZ * 400; // aiming point / PAPI abeam
+      state.pos.set(aimX - e.dirX * dist, e.y + profile.groundHeight + dist * Math.tan(GLIDE_RAD), aimZ - e.dirZ * dist);
+      terrain.prime(state.pos.x, state.pos.z);
+      state.vel.set(e.dirX * v * Math.cos(GLIDE_RAD), -v * Math.sin(GLIDE_RAD), e.dirZ * v * Math.cos(GLIDE_RAD));
       state.onGround = false;
       state.apMaster = false;
       state.altHold = false;
       landing.airTime = 10;
       landing.crashResetAt = 0;
       if (profile.rotorcraft) {
-        state.rot.set(0, 0, 0);
+        state.rot.set(0, yawFor(e.dirX, e.dirZ), 0);
         state.throttle = 0.66; // slightly below hover collective: gentle descent
         state.power = 66;
       } else {
@@ -775,14 +802,38 @@
         const clMax = profile.cl0 + profile.clAlpha * profile.stallAoA;
         const cl = clMax * (profile.stallKt / profile.approachKt) ** 2;
         const alpha = (cl - profile.cl0) / profile.clAlpha;
-        state.rot.set(alpha - GLIDE_RAD, 0, 0);
+        state.rot.set(alpha - GLIDE_RAD, yawFor(e.dirX, e.dirZ), 0);
         const drag = 0.0006 * v * v + 9.81 * cl * 0.05;
         state.throttle = Math.max(0, Math.min(1, (drag - 9.81 * Math.sin(GLIDE_RAD)) / profile.maxThrust));
         state.power = state.throttle * 100;
       }
       updateAPReadout();
-      flightMsg(`FINAL APPROACH RWY 09L at ${profile.approachKt} KT - follow the PAPI: 2 white + 2 red = on glide path`, '#38bdf8', 7000);
+      flightMsg(`FINAL APPROACH ${e.icao} RWY ${e.ident} at ${profile.approachKt} KT - follow the PAPI: 2 white + 2 red = on glide path`, '#38bdf8', 7000);
     };
+
+    // Airport picker: the chosen runway end becomes the take-off point, approach target and route home
+    window.selectRunway = (value) => {
+      const [icao, ident] = value.split(' ');
+      const e = airports.end(icao, ident);
+      if (!e) return;
+      activeEnd = e;
+      navComputer.setRunway(e);
+      movingMap.setHome(e);
+    };
+    window.startAtRunway = () => { resetToThreshold(); flightMsg(`${activeEnd.icao} ${activeEnd.airportName} - RWY ${activeEnd.ident}, ${activeEnd.elevFt} FT`, '#38bdf8', 4000); };
+    (function fillAirportPicker() {
+      const sel = document.getElementById('apt-select');
+      if (!sel) return;
+      airports.ends()
+        .sort((a, b) => (a.icao + a.ident).localeCompare(b.icao + b.ident))
+        .forEach((e) => {
+          const opt = document.createElement('option');
+          opt.value = `${e.icao} ${e.ident}`;
+          opt.textContent = `${e.icao} ${e.airportName} - RWY ${e.ident}`;
+          if (e === activeEnd || (e.icao === activeEnd.icao && e.ident === activeEnd.ident)) opt.selected = true;
+          sel.appendChild(opt);
+        });
+    })();
 
     // Highlight the active fleet button
     window.addEventListener('aircraftchanged', (e) => {
@@ -896,7 +947,7 @@
       if (e.code === 'BracketRight') adjustTargetAlt(500);
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
-      if (e.code === 'KeyL') window.startApproach(); // 3 degree final to runway 09L
+      if (e.code === 'KeyL') window.startApproach(); // 3 degree final to the active runway
       if (e.code === 'KeyM') movingMap.toggleSize();
       if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z);
     });
@@ -1214,6 +1265,7 @@
       }
       phase6.update(performance.now(), state.pos);
       terrain.update(state.pos.x, state.pos.z);
+      airports.update(state.pos, performance.now());
 
       // Return-to-land route + moving map
       const headingNow = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
@@ -1296,7 +1348,9 @@
         const camOffset = tmpVec.copy(aircraft.chaseOffset);
         if (isFighterCam()) camOffset.z += Math.max(0, Math.min(18.0, (state.mach - 0.5) * 8.0));
         camOffset.applyQuaternion(bodyQuat).add(state.pos);
-        camera.position.lerp(camOffset, 1 - Math.exp(-9.75 * dt));
+        // Smooth follow; snap straight there after a jump (new airport, approach start, reset)
+        if (camera.position.distanceTo(camOffset) > 1000) camera.position.copy(camOffset);
+        else camera.position.lerp(camOffset, 1 - Math.exp(-9.75 * dt));
         camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));
       }
 

@@ -26,7 +26,8 @@ const LAKES = [
 ];
 
 // groundAt(x, z): ground height (world y); buildings, lakes and the AFS runway sit on it
-export function createBengaluruCity(scene, groundAt = () => 0) {
+// isFree(x, z): false on airport ground (e.g. HAL inside the city) - no building there
+export function createBengaluruCity(scene, groundAt = () => 0, isFree = () => true) {
   const group = new THREE.Group();
   group.name = 'bengaluru_city';
   const rand = rng(560001); // Bengaluru PIN
@@ -51,6 +52,7 @@ export function createBengaluruCity(scene, groundAt = () => 0) {
       dummy.position.set(bx, groundAt(bx, bz) - 3, bz); // footing slightly sunk on sloping ground
       dummy.rotation.set(0, Math.round(rand() * 4) * 0.12, 0);
       dummy.scale.set(w, h, w * (0.6 + rand() * 0.8));
+      if (!isFree(bx, bz)) dummy.scale.set(0, 0, 0);
       dummy.updateMatrix();
       buildings.setMatrixAt(n, dummy.matrix);
       buildings.setColorAt(n, col.setHex(shades[Math.floor(rand() * shades.length)]));
