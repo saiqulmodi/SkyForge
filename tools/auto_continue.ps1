@@ -1,5 +1,6 @@
 # SkyForge auto-continue: resumes the PROGRESS.md task after a Claude usage limit resets.
-# Run by scheduled task SkyForge_AutoContinue every 30 min. Disables itself when STATUS: DONE.
+# Run by scheduled task SkyForge_AutoContinue every 30 min. Does nothing while STATUS: DONE
+# (it never disables itself, so a new task written into PROGRESS.md is picked up without re-arming).
 $proj = 'C:\Users\saiqu\Projects\skyforge'
 $progress = Join-Path $proj 'PROGRESS.md'
 $lock = Join-Path $proj 'tools\auto_continue.lock'
@@ -9,8 +10,6 @@ function Log($m) { Add-Content -Path $log -Value ("{0}  {1}" -f (Get-Date -Forma
 
 $text = Get-Content $progress -Raw
 if ($text -match 'STATUS: DONE') {
-  Log 'STATUS: DONE - disabling task'
-  Disable-ScheduledTask -TaskName 'SkyForge_AutoContinue' | Out-Null
   exit 0
 }
 # Another run still working (lock younger than 3 h)
