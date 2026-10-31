@@ -828,12 +828,14 @@ function layoutAirliner(g, mat, mfds) {
 const LAYOUTS = { fighter: layoutFighter, trainer: layoutTrainer, heli: layoutHeli, airliner: layoutAirliner };
 const MFD_PAGES = { fighter: ['pfd', 'nav', 'eng'], trainer: ['pfd', 'eng'], heli: ['pfd', 'eng'], airliner: ['pfd', 'nav', 'eng'] };
 
-export function buildCockpit(aircraftId) {
+// eyeOffset (optional): the airframe's cockpitOffset; defaults to the spec offset
+export function buildCockpit(aircraftId, eyeOffset) {
   const id = aircraftId === 'helicopter' ? 'heli' : aircraftId;
   const spec = COCKPIT_SPECS[id];
+  const offset = eyeOffset ? eyeOffset.clone() : new THREE.Vector3(...spec.offset);
   const group = new THREE.Group();
   group.name = `cockpit_${id}`;
-  group.position.set(...spec.offset);
+  group.position.copy(offset);
 
   const mat = cockpitMaterials();
   const mfds = new CockpitMfdSet(MFD_PAGES[id]);
@@ -847,7 +849,7 @@ export function buildCockpit(aircraftId) {
   return {
     id,
     group,
-    cockpitOffset: new THREE.Vector3(...spec.offset),
+    cockpitOffset: offset,
 
     reset() {
       fuelKg = spec.fuelKg;

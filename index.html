@@ -394,7 +394,8 @@
 
   <script type="module">
     import * as THREE from 'three';
-    import { buildCockpit } from './src/aircraft/cockpitInterior.js';
+    import { FleetManager } from './src/aircraft/FleetManager.js';
+    import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
 
     // ==========================================
     // 1. PROCEDURAL AUDIO SYNTHESIZER
@@ -566,6 +567,7 @@
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
     renderer.shadowMap.enabled = true;
+    window.skyforgeRenderer = renderer; // console check: skyforgeRenderer.info.memory
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x89c2d9);
@@ -673,154 +675,52 @@
       targetAlt: 3000
     };
 
-    // Control surface hinged at its leading edge (x, y, z); the surface extends aft (+Z)
-    function addSurface(model, mat, w, h, d, x, y, z) {
-      const pivot = new THREE.Group();
-      pivot.position.set(x, y, z);
-      const surface = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      surface.position.z = d / 2;
-      pivot.add(surface);
-      model.add(pivot);
-      return pivot;
-    }
-
-    function buildFleet() {
-      // 1. Trainer
-      const trainer = new THREE.Group();
-      const fusGeo = new THREE.CylinderGeometry(0.35, 0.7, 7.5, 16);
-      fusGeo.rotateX(Math.PI / 2);
-      trainer.add(new THREE.Mesh(fusGeo, new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3 })));
-      const trWings = new THREE.Mesh(new THREE.BoxGeometry(11.0, 0.15, 1.6), new THREE.MeshStandardMaterial({ color: 0x0284c7 }));
-      trWings.position.set(0, 0.45, -0.4);
-      trainer.add(trWings);
-      const trTail = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.08, 0.9), trWings.material);
-      trTail.position.set(0, 0.2, 3.2);
-      trainer.add(trTail);
-      const trVFin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.3, 1.1), trWings.material);
-      trVFin.position.set(0, 0.85, 3.2);
-      trainer.add(trVFin);
-      trainer.userData.surfaces = {
-        aileronL: addSurface(trainer, trWings.material, 2.6, 0.1, 0.35, -3.8, 0.45, 0.4),
-        aileronR: addSurface(trainer, trWings.material, 2.6, 0.1, 0.35, 3.8, 0.45, 0.4),
-        elevator: addSurface(trainer, trWings.material, 3.4, 0.06, 0.3, 0, 0.2, 3.65),
-        rudder: addSurface(trainer, trWings.material, 0.06, 1.2, 0.3, 0, 0.85, 3.75)
-      };
-
-      // 2. Airliner
-      const airliner = new THREE.Group();
-      const airFus = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 36, 24), new THREE.MeshStandardMaterial({ color: 0xf1f5f9 }));
-      airFus.geometry.rotateX(Math.PI / 2);
-      airliner.add(airFus);
-      const airNose = new THREE.Mesh(new THREE.ConeGeometry(1.9, 5.5, 24), airFus.material);
-      airNose.geometry.rotateX(-Math.PI / 2);
-      airNose.position.set(0, 0, -20.75);
-      airliner.add(airNose);
-      const airWings = new THREE.Mesh(new THREE.BoxGeometry(34.0, 0.35, 4.5), new THREE.MeshStandardMaterial({ color: 0x94a3b8 }));
-      airWings.position.set(0, 0.2, 2.0);
-      airliner.add(airWings);
-      airliner.userData.surfaces = {
-        aileronL: addSurface(airliner, airWings.material, 5.0, 0.25, 0.7, -13.0, 0.2, 4.25),
-        aileronR: addSurface(airliner, airWings.material, 5.0, 0.25, 0.7, 13.0, 0.2, 4.25)
-      };
-
-      // 3. Multirole Supersonic Fighter with Afterburner Nozzles
-      const fighter = new THREE.Group();
-      const fFus = new THREE.Mesh(new THREE.ConeGeometry(1.1, 16.0, 16), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.2 }));
-      fFus.geometry.rotateX(-Math.PI / 2);
-      fighter.add(fFus);
-      const fWings = new THREE.Mesh(new THREE.BoxGeometry(11.0, 0.12, 6.5), fFus.material);
-      fWings.position.set(0, 0, 1.2);
-      fighter.add(fWings);
-      const fCanopy = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 16), new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.1, metalness: 0.9 }));
-      fCanopy.scale.set(0.6, 0.5, 2.0);
-      fCanopy.position.set(0, 0.7, -2.5);
-      fighter.add(fCanopy);
-
-      fighter.userData.surfaces = {
-        elevonL: addSurface(fighter, fFus.material, 3.0, 0.08, 0.6, -3.2, 0, 4.45),
-        elevonR: addSurface(fighter, fFus.material, 3.0, 0.08, 0.6, 3.2, 0, 4.45)
-      };
-
-      // Additive, un-tonemapped flame so the afterburner glows
-      const flameMat = new THREE.MeshBasicMaterial({
-        color: 0x38bdf8, transparent: true, opacity: 0.85,
-        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
-      });
-      const flameGeo = new THREE.ConeGeometry(0.45, 3.5, 12);
-      flameGeo.rotateX(Math.PI / 2);
-      const abFlame1 = new THREE.Mesh(flameGeo, flameMat);
-      abFlame1.position.set(0.55, 0, 9.2);
-      abFlame1.name = "flame1";
-      fighter.add(abFlame1);
-      const abFlame2 = new THREE.Mesh(flameGeo, flameMat);
-      abFlame2.position.set(-0.55, 0, 9.2);
-      abFlame2.name = "flame2";
-      fighter.add(abFlame2);
-
-      // 4. Helicopter
-      const heli = new THREE.Group();
-      const hPod = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 16), new THREE.MeshStandardMaterial({ color: 0x059669 }));
-      hPod.scale.set(0.9, 1.0, 1.8);
-      heli.add(hPod);
-      const hBoom = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.15, 6.0, 12), hPod.material);
-      hBoom.geometry.rotateX(Math.PI / 2);
-      hBoom.position.set(0, 0.3, 3.8);
-      heli.add(hBoom);
-      const hRotor = new THREE.Mesh(new THREE.CylinderGeometry(5.8, 5.8, 0.02, 16), new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.45 }));
-      hRotor.position.set(0, 1.8, 0);
-      heli.add(hRotor);
-
-      return { trainer, airliner, fighter, heli };
-    }
-
-    const models = buildFleet();
-    let currentAircraft = 'fighter';
-
-    // 3D cockpit per airframe, child of its mesh. Camera layers: exterior on LAYER_EXTERIOR (chase only),
-    // cockpit on LAYER_COCKPIT (cockpit view only); world and lights stay on layer 0.
+    // FleetManager owns the 4 airframes (src/aircraft/*). Camera layers: exterior on LAYER_EXTERIOR
+    // (chase only), 3D cockpit on LAYER_COCKPIT (cockpit view only); world and lights stay on layer 0.
     const LAYER_COCKPIT = 1;
     const LAYER_EXTERIOR = 2;
-    const cockpits = {};
-    Object.keys(models).forEach((id) => {
-      models[id].traverse((o) => o.layers.set(LAYER_EXTERIOR));
-      const cp = buildCockpit(id);
-      cp.group.traverse((o) => o.layers.set(LAYER_COCKPIT));
-      models[id].add(cp.group);
-      cockpits[id] = cp;
-    });
-    const CHASE_OFFSETS = {
-      trainer: new THREE.Vector3(0, 3.4, 13.0),
-      fighter: new THREE.Vector3(0, 3.4, 14.0),
-      airliner: new THREE.Vector3(0, 9.0, 48.0),
-      heli: new THREE.Vector3(0, 4.5, 17.0)
-    };
+    const fleet = new FleetManager({ parent: fleetContainer, layers: { exterior: LAYER_EXTERIOR, cockpit: LAYER_COCKPIT } });
+    let currentAircraft = null;
+    let aircraft = null; // active aircraft contract
+    let cockpit = null;  // its 3D cockpit
+    let profile = null;  // active flight profile (pushed into aero.js by FleetManager)
 
     window.selectAircraft = (type) => {
+      if (type === currentAircraft) return;
+      const airborne = aircraft !== null && !state.onGround;
+      aircraft = fleet.switchTo(type);
+      cockpit = fleet.cockpit;
+      profile = getFlightProfile();
       currentAircraft = type;
-      while (fleetContainer.children.length > 0) fleetContainer.remove(fleetContainer.children[0]);
-      fleetContainer.add(models[type]);
 
-      ['trainer', 'airliner', 'fighter', 'heli'].forEach(id => {
-        const btn = document.getElementById(`btn-${id}`);
-        if (btn) btn.classList.toggle('active', id === type);
-      });
-
-      const groundY = type === 'airliner' ? 2.2 : (type === 'heli' ? 1.4 : 1.2);
-      state.pos.set(0, groundY, 1800);
-      state.rot.set(0, 0, 0);
-      state.vel.set(0, 0, 0);
-      state.throttle = 0;
-      state.power = 0;
-      state.ias = 0;
-      state.mach = 0.0;
-      state.onGround = true;
-      state.apMaster = false;
-      state.altHold = false;
-      cockpits[type].reset();
+      if (airborne) {
+        // Keep position, heading and speed; just keep the new airframe's gear clear of the ground
+        state.pos.y = Math.max(state.pos.y, profile.groundHeight + 1);
+      } else {
+        // On the ground: reset to the runway 09L threshold
+        state.pos.set(0, profile.groundHeight, 1800);
+        state.rot.set(0, 0, 0);
+        state.vel.set(0, 0, 0);
+        state.throttle = 0;
+        state.power = 0;
+        state.ias = 0;
+        state.mach = 0.0;
+        state.onGround = true;
+        state.apMaster = false;
+        state.altHold = false;
+      }
       updateAPReadout();
     };
 
-    selectAircraft('fighter');
+    // Highlight the active fleet button
+    window.addEventListener('aircraftchanged', (e) => {
+      ['trainer', 'airliner', 'fighter', 'heli'].forEach(id => {
+        const btn = document.getElementById(`btn-${id}`);
+        if (btn) btn.classList.toggle('active', id === e.detail.id);
+      });
+    });
+
+    selectAircraft('trainer');
 
     // ==========================================
     // 5. CONTROLS & AUTOPILOT
@@ -923,6 +823,7 @@
       if (e.code === 'BracketLeft') adjustTargetAlt(-500);
       if (e.code === 'BracketRight') adjustTargetAlt(500);
       if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
+      if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
@@ -1020,19 +921,6 @@
     const eyeLocal = new THREE.Vector3();
     const headShake = { x: 0, y: 0 };
 
-    function animateControlSurfaces(model, pIn, rIn, yIn) {
-      const s = model.userData.surfaces;
-      if (!s) return;
-      const k = 0.35;
-      if (s.aileronL) { s.aileronL.rotation.x = rIn * k; s.aileronR.rotation.x = -rIn * k; }
-      if (s.elevator) s.elevator.rotation.x = -pIn * k;
-      if (s.rudder) s.rudder.rotation.y = yIn * k;
-      if (s.elevonL) {
-        s.elevonL.rotation.x = Math.max(-k, Math.min(k, -(pIn - rIn) * k));
-        s.elevonR.rotation.x = Math.max(-k, Math.min(k, -(pIn + rIn) * k));
-      }
-    }
-
     function animate() {
       requestAnimationFrame(animate);
       velBefore.copy(state.vel);
@@ -1041,26 +929,13 @@
       if (keys['ControlLeft'] || keys['ControlRight']) state.throttle = Math.max(0.0, state.throttle - 0.4 * dt);
 
       state.power += (state.throttle * 100 - state.power) * 3.5 * dt;
-      state.isAfterburner = (currentAircraft === 'fighter' && state.throttle > 0.70);
-
-      const fModel = models['fighter'];
-      const fl1 = fModel.getObjectByName("flame1");
-      const fl2 = fModel.getObjectByName("flame2");
-      if (fl1 && fl2) {
-        fl1.visible = state.isAfterburner;
-        fl2.visible = state.isAfterburner;
-        if (state.isAfterburner) {
-          const flameScale = 1.0 + Math.random() * 0.4;
-          fl1.scale.set(flameScale, flameScale, flameScale * 1.5);
-          fl2.scale.set(flameScale, flameScale, flameScale * 1.5);
-        }
-      }
+      state.isAfterburner = (profile.afterburnerThrust !== undefined && state.throttle > 0.70);
 
       let pIn = (keys['KeyS'] ? 1 : 0) - (keys['KeyW'] ? 1 : 0);
       let rIn = (keys['KeyA'] ? -1 : 0) + (keys['KeyD'] ? 1 : 0);
       let yIn = (keys['KeyQ'] ? 1 : 0) - (keys['KeyE'] ? 1 : 0);
 
-      if (state.apMaster && !state.onGround && currentAircraft !== 'heli') {
+      if (state.apMaster && !state.onGround && !profile.rotorcraft) {
         if (state.altHold) {
           const altFt = state.pos.y * 3.28084;
           const altErr = state.targetAlt - altFt;
@@ -1072,27 +947,22 @@
       state.ias = forwardSpeed * 1.94384;
       state.mach = state.ias / 661.47;
 
-      if (currentAircraft === 'heli') {
-        const collective = state.power / 100;
-        state.rot.x += (pIn * 0.9 - state.rot.x * 0.1) * dt;
-        state.rot.z += (-rIn * 0.9 - state.rot.z * 0.1) * dt;
-        state.rot.y += (yIn * 1.2) * dt;
-        state.vel.y += (collective * 14.0 - 9.81) * dt;
-        state.vel.z -= Math.sin(state.rot.x) * collective * 12.0 * dt;
-        state.vel.multiplyScalar(0.985);
+      if (profile.rotorcraft) {
+        // Rotorcraft branch (aero.js): collective = lift, cyclic = disc tilt, pedals = yaw
+        stepRotorcraft(state, { pitch: pIn, roll: rIn, yaw: yIn }, profile, dt);
       } else {
-        const isFighter = currentAircraft === 'fighter';
-        const vr = isFighter ? 110 : (currentAircraft === 'airliner' ? 90 : 55);
-        const pitchRate = isFighter ? 1.8 : 0.9;
-        const rollRate = isFighter ? 3.0 : 1.4;
+        // Fixed-wing: per-aircraft numbers come from the active profile
+        const vr = profile.vr;
+        const pitchRate = profile.maxPitchRate;
+        const rollRate = profile.maxRollRate;
 
         const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
         state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08) * dt;
-        state.rot.y += (yIn * 0.5 * cEff - rIn * 0.2 * cEff) * dt;
+        state.rot.y += (yIn * profile.maxYawRate * cEff - rIn * 0.2 * cEff) * dt;
         state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3) * dt;
 
         state.prevOnGround = state.onGround;
-        const groundHeight = currentAircraft === 'airliner' ? 2.2 : 1.2;
+        const groundHeight = profile.groundHeight;
 
         if (state.pos.y <= groundHeight) {
           state.pos.y = groundHeight;
@@ -1105,7 +975,7 @@
             state.vel.z *= 0.8;
             state.vel.x *= 0.8;
           } else {
-            let groundThrust = (state.power / 100) * (isFighter ? 65.0 : 28.0);
+            let groundThrust = (state.power / 100) * profile.groundThrust;
             state.vel.z -= groundThrust * dt;
             state.vel.z *= 0.998;
           }
@@ -1121,14 +991,11 @@
         } else {
           state.onGround = false;
 
-          const liftFactor = state.rot.x * forwardSpeed * (isFighter ? 0.35 : 0.55);
+          const liftFactor = state.rot.x * forwardSpeed * profile.liftCoeff;
           state.vel.y += (liftFactor - 9.81) * dt;
           state.vel.y = Math.max(-35, Math.min(40, state.vel.y));
 
-          let maxThrust = 26.0;
-          if (isFighter) {
-            maxThrust = state.isAfterburner ? 220.0 : 65.0;
-          }
+          const maxThrust = state.isAfterburner ? profile.afterburnerThrust : profile.maxThrust;
 
           let waveDragCoeff = 0.0006;
           if (state.mach > 0.85 && state.mach < 1.25) {
@@ -1142,7 +1009,7 @@
         }
       }
 
-      const gLimit = currentAircraft === 'airliner' ? 2.2 : (currentAircraft === 'heli' ? 1.4 : 1.2);
+      const gLimit = profile.groundHeight;
       if (state.pos.y < gLimit) {
         state.pos.y = gLimit;
         state.vel.y = 0;
@@ -1170,9 +1037,15 @@
       const rawG = Math.max(-3, Math.min(10, tmpVec.dot(tmpUp) / 9.81));
       gLoad += (rawG - gLoad) * Math.min(1, dt / 0.3);
 
-      animateControlSurfaces(models[currentAircraft], pIn, rIn, yIn);
+      // Airframe animation: control surfaces, propeller / rotors, afterburner, cargo ramp
+      aircraft.update(dt, {
+        input: { pitch: pIn, roll: rIn, yaw: yIn },
+        throttle: state.throttle,
+        power: state.power,
+        isAfterburner: state.isAfterburner,
+        iasKt: state.ias
+      });
 
-      const cockpit = cockpits[currentAircraft];
       bodyVel.copy(state.vel).applyQuaternion(headQuat.copy(bodyQuat).invert());
       const fwdSpeed = -bodyVel.z;
       cockpit.update({
@@ -1216,8 +1089,8 @@
       } else {
         camera.layers.set(0);
         camera.layers.enable(LAYER_EXTERIOR);
-        const camOffset = tmpVec.copy(CHASE_OFFSETS[currentAircraft]);
-        if (isFighterCam()) camOffset.z += Math.min(18.0, (state.mach - 0.5) * 8.0);
+        const camOffset = tmpVec.copy(aircraft.chaseOffset);
+        if (isFighterCam()) camOffset.z += Math.max(0, Math.min(18.0, (state.mach - 0.5) * 8.0));
         camOffset.applyQuaternion(bodyQuat).add(state.pos);
         camera.position.lerp(camOffset, 1 - Math.exp(-9.75 * dt));
         camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));

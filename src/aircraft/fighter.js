@@ -1,4 +1,5 @@
 ﻿import * as THREE from 'three';
+import { addSurface, addGearLeg, deflectSurfaces, disposeObject } from './airframeKit.js';
 
 export function createFighter() {
   const fighterGroup = new THREE.Group();
@@ -94,15 +95,84 @@ export function createFighter() {
   fighterGroup.add(leftAB);
   fighterGroup.add(rightAB);
 
+  // ---- Fleet contract wrapper ----
+  // The stealth model above is built nose towards +Z; the flight loop flies nose towards -Z,
+  // so it is turned 180 degrees inside an outer group. Its look is unchanged.
+  const mesh = new THREE.Group();
+  mesh.name = 'aircraft_fighter';
+  fighterGroup.rotation.y = Math.PI;
+  mesh.add(fighterGroup);
+
+  const surfaces = {
+    elevonL: addSurface(mesh, radarAbsorbentMat, 2.4, 0.08, 0.45, -2.4, -0.01, 3.55),
+    elevonR: addSurface(mesh, radarAbsorbentMat, 2.4, 0.08, 0.45, 2.4, -0.01, 3.55)
+  };
+
+  // Afterburner plume: additive, un-tonemapped so it glows
+  const plumeMat = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+  });
+  const plumeGeo = new THREE.ConeGeometry(0.33, 3.2, 12);
+  plumeGeo.rotateX(Math.PI / 2);
+  const plumes = [-0.55, 0.55].map((x) => {
+    const plume = new THREE.Mesh(plumeGeo, plumeMat);
+    plume.position.set(x, 0, 7.2);
+    plume.visible = false;
+    mesh.add(plume);
+    return plume;
+  });
+
+  const gearMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
+  addGearLeg(mesh, gearMat, 0, -0.3, -3.2, -1.2, 0.2);
+  addGearLeg(mesh, gearMat, -1.1, -0.1, 1.0, -1.2, 0.25);
+  addGearLeg(mesh, gearMat, 1.1, -0.1, 1.0, -1.2, 0.25);
+
+  const reheat = function(throttle) {
+    // Light up reheat cones past 70% throttle
+    const abIntensity = throttle > 0.7 ? (throttle - 0.7) / 0.3 : 0.0;
+    burnerMat.opacity = abIntensity * 0.9;
+  };
+
   return {
-    mesh: fighterGroup,
+    id: 'fighter',
+    name: '5th-Gen Stealth Fighter',
+    mesh,
     type: 'fighter',
-    cockpitOffset: new THREE.Vector3(0, 0.48, 1.35), // Pilot eye location inside canopy
     afterburners: [leftAB, rightAB],
-    update: function(throttle) {
-      // Light up reheat cones past 70% throttle
-      const abIntensity = throttle > 0.7 ? (throttle - 0.7) / 0.3 : 0.0;
-      burnerMat.opacity = abIntensity * 0.9;
+    // Flight loop's existing fighter numbers (feel unchanged)
+    profile: {
+      dryMass: 13300,
+      inertia: { x: 31000, y: 160000, z: 180000 },
+      maxThrust: 65.0,
+      afterburnerThrust: 220.0,
+      maxRollRate: 3.0,
+      maxPitchRate: 1.8,
+      maxYawRate: 0.5,
+      vr: 110,
+      groundThrust: 65.0,
+      liftCoeff: 0.35,
+      groundHeight: 1.2,
+      mass: 13300, wingArea: 42.7, aspectRatio: 2.7, oswaldEfficiency: 0.7, cd0: 0.02, cl0: 0.1,
+      clAlpha: 3.5, stallAoA: 0.5, pitchRate: 1.8, rollRate: 3.0, yawRate: 0.5
+    },
+    cockpitOffset: new THREE.Vector3(0, 0.62, -1.3), // pilot eye inside the canopy
+    chaseOffset: new THREE.Vector3(0, 3.4, 14.0),
+
+    update(dt, flightState) {
+      reheat(flightState.throttle);
+      deflectSurfaces(surfaces, flightState.input);
+      plumes.forEach((p) => {
+        p.visible = flightState.isAfterburner;
+        if (flightState.isAfterburner) {
+          const flameScale = 1.0 + Math.random() * 0.4;
+          p.scale.set(flameScale, flameScale, flameScale * 1.5);
+        }
+      });
+    },
+
+    dispose() {
+      disposeObject(mesh);
     }
   };
 }

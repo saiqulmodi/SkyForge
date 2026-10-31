@@ -1,4 +1,5 @@
 ﻿import * as THREE from 'three';
+import { addSurface, addGearLeg, deflectSurfaces, disposeObject } from './airframeKit.js';
 
 export class TrainerModel {
   constructor() {
@@ -309,4 +310,65 @@ export class TrainerModel {
       }
     });
   }
+}
+
+// ==========================================
+// FLEET CONTRACT: createTrainer()
+// Uses the turboprop trainer mesh above unchanged (only lowered onto fixed gear) plus moving surfaces.
+// Profile numbers are the flight loop's existing trainer values, so the flight feel is unchanged.
+// ==========================================
+export function createTrainer() {
+  const holder = { propellers: [] };
+  const model = TrainerModel.prototype.buildMilitaryTrainer.call(holder);
+  model.position.y = -0.4;
+
+  const mesh = new THREE.Group();
+  mesh.name = 'aircraft_trainer';
+  mesh.add(model);
+
+  const paintMat = model.children[0].material;
+  const whiteMat = model.children[3].material;
+  const surfaces = {
+    aileronL: addSurface(model, paintMat, 2.4, 0.1, 0.3, -3.3, 0.45, 0.55),
+    aileronR: addSurface(model, paintMat, 2.4, 0.1, 0.3, 3.3, 0.45, 0.55),
+    elevator: addSurface(model, whiteMat, 3.0, 0.06, 0.3, 0, 0.75, 3.65),
+    rudder: addSurface(model, whiteMat, 0.08, 1.6, 0.3, 0, 1.35, 3.8)
+  };
+
+  const gearMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
+  addGearLeg(mesh, gearMat, 0, -0.3, -2.6, -1.2, 0.2);
+  addGearLeg(mesh, gearMat, -1.3, 0.05, -0.3, -1.2, 0.25);
+  addGearLeg(mesh, gearMat, 1.3, 0.05, -0.3, -1.2, 0.25);
+
+  return {
+    id: 'trainer',
+    name: 'Turboprop Trainer',
+    mesh,
+    profile: {
+      dryMass: 2250,
+      inertia: { x: 4200, y: 7800, z: 3600 },
+      maxThrust: 26.0,
+      maxRollRate: 1.4,
+      maxPitchRate: 0.9,
+      maxYawRate: 0.5,
+      vr: 55,
+      groundThrust: 28.0,
+      liftCoeff: 0.55,
+      groundHeight: 1.2,
+      // keys AeroEngine6DOF reads
+      mass: 2250, wingArea: 16.3, aspectRatio: 7.1, oswaldEfficiency: 0.78, cd0: 0.025, cl0: 0.3,
+      clAlpha: 5.0, stallAoA: 0.28, pitchRate: 0.9, rollRate: 1.4, yawRate: 0.5
+    },
+    cockpitOffset: new THREE.Vector3(0, 0.75, -1.1),
+    chaseOffset: new THREE.Vector3(0, 3.4, 13.0),
+
+    update(dt, flightState) {
+      deflectSurfaces(surfaces, flightState.input);
+      holder.propellers.forEach((p) => { p.rotation.z += (0.45 + flightState.power / 100 * 0.8) * dt * 60; });
+    },
+
+    dispose() {
+      disposeObject(mesh);
+    }
+  };
 }

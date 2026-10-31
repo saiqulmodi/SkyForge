@@ -26,6 +26,8 @@ export class AeroEngine6DOF {
   }
 
   update(dt, controls) {
+    if (this.specs.rotorcraft) return this.updateRotorcraft(dt, controls);
+
     // --- ENFORCED GROUND IMPACT / CRASH DETECTOR ---
     const currentAlt = (this.position && typeof this.position.y === 'number') ? this.position.y : 0;
     const currentSpeedKt = (this.velocity) ? this.velocity.length() * 1.94384 : 0;
@@ -189,10 +191,10 @@ export class AeroEngine6DOF {
     worldForces.y -= gravityForce;
 
     // Ground contact & normal force
-    const groundLevel = 1.45;
-    if (this.position.y <= groundLevel) {
+    const gearGroundLevel = 1.45; // renamed: a second `const groundLevel` in this scope was a SyntaxError
+    if (this.position.y <= gearGroundLevel) {
       this.isOnGround = true;
-      this.position.y = groundLevel;
+      this.position.y = gearGroundLevel;
 
       // Cancel gravity sink when resting on the runway
       if (worldForces.y < 0) {
@@ -243,13 +245,8 @@ export class AeroEngine6DOF {
     );
     this.quaternion.multiply(deltaRot);
     this.quaternion.normalize();
-  }
-}
 
-
-
-
-    // --- Ground Impact Tripwire ---
+    // --- Ground Impact Tripwire --- (was pasted after the class at module level, which threw on import)
     if (this.altitude <= 5 && (this.airspeed > 180 || Math.abs(this.pitch) > 0.35 || Math.abs(this.roll) > 0.45)) {
         if (typeof this.triggerCrash === 'function') {
             this.triggerCrash('HIGH_SPEED_GROUND_IMPACT');
@@ -262,3 +259,79 @@ export class AeroEngine6DOF {
             if (this.resetFlight) this.resetFlight();
         }
     }
+  }
+
+  // Swap the flight profile (FleetManager pushes the active aircraft's profile here)
+  setProfile(profile) {
+    this.specs = { ...this.specs, ...profile };
+  }
+
+  // Rotorcraft branch: separate from the fixed-wing maths above
+  updateRotorcraft(dt, controls) {
+    this.rotation.setFromQuaternion(this.quaternion, 'YXZ');
+    const s = { pos: this.position, vel: this.velocity, rot: this.rotation, power: (controls.throttle || 0) * 100, onGround: this.isOnGround };
+    stepRotorcraft(s, { pitch: -(controls.pitch || 0), roll: controls.roll || 0, yaw: -(controls.yaw || 0) }, this.specs, dt);
+    this.isOnGround = s.onGround;
+    this.position.addScaledVector(this.velocity, dt);
+    this.quaternion.setFromEuler(this.rotation);
+    this.iasKnots = this.velocity.length() * 1.94384;
+    this.altitudeFt = this.position.y * 3.28084;
+    this.vsiFpm = this.velocity.y * 196.85;
+  }
+}
+
+// ==========================================
+// ACTIVE FLIGHT PROFILE (pushed by FleetManager, read by the flight loop)
+// ==========================================
+let activeFlightProfile = null;
+
+export function setFlightProfile(profile) {
+  activeFlightProfile = profile;
+}
+
+export function getFlightProfile() {
+  return activeFlightProfile;
+}
+
+// ==========================================
+// ROTORCRAFT FLIGHT MODEL
+// collective (power) = rotor thrust along the disc axis, cyclic = disc / fuselage tilt,
+// pedals = yaw. Attitude self-levels when the cyclic is centred and air drag damps
+// both climb rate and drift, so a centred cyclic at hover collective holds a stable hover.
+// s: { pos, vel, rot (Euler 'YXZ'), power 0-100, onGround } - updates s.vel, s.rot, s.onGround (not s.pos)
+// input: { pitch: +1 = cyclic aft (nose up), roll: +1 = right, yaw: +1 = left pedal }
+// ==========================================
+const _discUp = new THREE.Vector3();
+
+export function stepRotorcraft(s, input, p, dt) {
+  const tilt = p.maxCyclicTilt;
+  const onGround = s.pos.y <= p.groundHeight + 0.01;
+
+  // Cyclic tilts the disc towards a target attitude; pedals yaw the airframe
+  const targetPitch = onGround ? Math.max(0, input.pitch * tilt * 0.2) : input.pitch * tilt;
+  const targetRoll = onGround ? 0 : -input.roll * tilt;
+  const k = Math.min(1, p.attitudeResponse * dt);
+  s.rot.x += (targetPitch - s.rot.x) * k;
+  s.rot.z += (targetRoll - s.rot.z) * k;
+  s.rot.y += input.yaw * p.maxYawRate * dt;
+
+  // Rotor thrust along the disc axis minus gravity
+  const thrust = (s.power / 100) * p.liftAccel;
+  _discUp.set(0, 1, 0).applyEuler(s.rot);
+  s.vel.addScaledVector(_discUp, thrust * dt);
+  s.vel.y -= 9.81 * dt;
+
+  // Air drag: horizontal drift and vertical rate both decay
+  s.vel.x -= s.vel.x * p.horizontalDrag * dt;
+  s.vel.z -= s.vel.z * p.horizontalDrag * dt;
+  s.vel.y -= s.vel.y * p.verticalDamping * dt;
+
+  if (onGround && s.vel.y <= 0) {
+    s.vel.y = 0;
+    s.vel.x *= 0.9;
+    s.vel.z *= 0.9;
+    s.onGround = true;
+  } else {
+    s.onGround = false;
+  }
+}
