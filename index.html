@@ -399,6 +399,64 @@
     setTimeout(place, 300); setInterval(place, 1500);
   });
 </script>
+<style>
+  .deck-pop-btn { border: 1px solid #38bdf8 !important; background: rgba(2,132,199,0.25) !important; color: #e2e8f0 !important; }
+  .deck-pop-btn .t { color: #38bdf8; margin-right: 4px; }
+  .deck-pop { position: fixed; z-index: 10005; display: none; flex-direction: column; gap: 4px; padding: 6px;
+    background: rgba(15,23,42,0.97); border: 1px solid #38bdf8; border-radius: 8px; box-shadow: 0 -6px 20px rgba(0,0,0,.5); }
+  .deck-pop.open { display: flex; }
+  .deck-pop button { width: 100%; text-align: left; font-size: 12px !important; padding: 7px 12px !important; white-space: nowrap; }
+  .deck-pop hr { border: 0; border-top: 1px solid #334155; margin: 2px 0; }
+</style>
+<script>
+  // Bottom row: a group with more than one button becomes one button ("GROUP: current choice") that pops up its
+  // list above it. The original buttons move into the list unchanged (their ids, onclick and keys keep working).
+  window.addEventListener('DOMContentLoaded', () => {
+    const deck = document.getElementById('control-deck');
+    if (!deck) return;
+    let openPop = null;
+    const closeAll = () => { if (openPop) { openPop.classList.remove('open'); openPop = null; } };
+    document.addEventListener('pointerdown', (e) => { if (openPop && !openPop.contains(e.target) && !e.target.closest('.deck-pop-btn')) closeAll(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+    deck.querySelectorAll('.panel-box').forEach((panel) => {
+      const grids = [...panel.querySelectorAll('.btn-grid')];
+      const buttons = grids.flatMap((g) => [...g.querySelectorAll('button')]);
+      if (buttons.length < 2) return;
+      const title = (panel.querySelector('b') || {}).textContent || 'MENU';
+      const pop = document.createElement('nav'); pop.className = 'deck-pop';   // <nav>: the old body > div styles leave it alone
+      grids.forEach((g, i) => {
+        if (i && g.querySelector('button')) pop.appendChild(document.createElement('hr'));
+        [...g.querySelectorAll('button')].forEach((b) => pop.appendChild(b));
+        g.remove();
+      });
+      document.body.appendChild(pop);
+      const trig = document.createElement('button'); trig.className = 'deck-pop-btn';
+      const label = () => {
+        const act = buttons.find((b) => b.classList.contains('active'));
+        trig.innerHTML = `<span class="t">${title}</span>${act ? act.textContent : ''} &#9652;`;
+      };
+      label();
+      buttons.forEach((b) => {
+        new MutationObserver(label).observe(b, { attributes: true, attributeFilter: ['class'], characterData: true, childList: true, subtree: true });
+        b.addEventListener('click', () => { setTimeout(label, 0); closeAll(); });
+      });
+      trig.onclick = () => {
+        if (openPop === pop) return closeAll();
+        closeAll();
+        pop.classList.add('open'); openPop = pop;
+        const r = trig.getBoundingClientRect();
+        pop.style.minWidth = r.width + 'px';
+        pop.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+        pop.style.left = Math.max(6, Math.min(r.left, window.innerWidth - pop.offsetWidth - 6)) + 'px';
+      };
+      // the group title is inside the button now; the first title of the panel is hidden (others, like DESTINATION, stay)
+      const firstB = panel.querySelector('b'); if (firstB) firstB.style.setProperty('display', 'none', 'important');
+      panel.insertBefore(trig, firstB ? firstB.nextSibling : panel.firstChild);
+    });
+    deck.addEventListener('scroll', closeAll);
+    window.addEventListener('resize', closeAll);
+  });
+</script>
 </head>
 <body>
   <img id="sf-badge" src="assets/skyforge-icon.svg" alt="SkyForge" title="SkyForge" style="position:fixed;top:10px;left:10px;width:64px;height:64px;z-index:10003;pointer-events:none;filter:drop-shadow(0 0 6px rgba(56,189,248,.6));">
