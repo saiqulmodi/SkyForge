@@ -98,6 +98,12 @@ export class MovingMap {
     const k = (Math.min(W, H - 54) / 2 - 14) / half;
     const sx = (x, z) => cx + (-(z - midZ)) * k; // east is right
     const sy = (x, z) => cy + (x - midX) * k;    // south is down
+    const tag = (text, x, y, color) => {          // small boxed label that reads over anything
+      ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+      const w = ctx.measureText(text).width + 8;
+      ctx.fillStyle = 'rgba(6,12,18,0.85)'; ctx.fillRect(x - w / 2, y - 8, w, 13);
+      ctx.fillStyle = color; ctx.fillText(text, x, y + 2); ctx.textAlign = 'left';
+    };
 
     ctx.clearRect(0, 0, W, H);
     ctx.save();
@@ -123,17 +129,32 @@ export class MovingMap {
     this.roads.forEach((r) => poly(r, 'rgba(250,204,21,0.3)', 1));
 
     // Runways of every airport (at least 3 px wide so they stay visible zoomed out), ICAO labels, terminals
-    ctx.lineWidth = Math.max(3, RUNWAY.width * k);
     const runways = this.airports ? this.airports.runways : [
       { ax: 0, az: RUNWAY.halfLength, bx: 0, bz: -RUNWAY.halfLength },
       { ax: SOUTH_RUNWAY_X, az: RUNWAY.halfLength, bx: SOUTH_RUNWAY_X, bz: -RUNWAY.halfLength }
     ];
+    const act = this.extras && this.extras.active;   // take-off runway end
+    const sameEnd = (a, b) => !!(a && b && a.icao === b.icao && a.ident === b.ident);
+    const sameRw = (rw, e) => e && rw.icao === e.icao && (rw.le === e.ident || rw.he === e.ident);
+    const rwW = Math.max(5, RUNWAY.width * k);
     runways.forEach((rw) => {
-      ctx.strokeStyle = rw.icao === this.home.icao ? '#ffffff' : '#9ca3af';
-      ctx.beginPath();
-      ctx.moveTo(sx(rw.ax, rw.az), sy(rw.ax, rw.az));
-      ctx.lineTo(sx(rw.bx, rw.bz), sy(rw.bx, rw.bz));
-      ctx.stroke();
+      const toRw = sameRw(rw, act), landRw = sameRw(rw, nr && nr.end);
+      const role = (state.onGround ? toRw : toRw && !landRw) ? '#4ade80' : landRw ? '#22d3ee' : toRw ? '#4ade80' : rw.icao === this.home.icao ? '#ffffff' : '#9ca3af';
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = rwW + 3;           // dark edge so it reads on any background
+      ctx.beginPath(); ctx.moveTo(sx(rw.ax, rw.az), sy(rw.ax, rw.az)); ctx.lineTo(sx(rw.bx, rw.bz), sy(rw.bx, rw.bz)); ctx.stroke();
+      ctx.strokeStyle = role; ctx.lineWidth = rwW;
+      ctx.beginPath(); ctx.moveTo(sx(rw.ax, rw.az), sy(rw.ax, rw.az)); ctx.lineTo(sx(rw.bx, rw.bz), sy(rw.bx, rw.bz)); ctx.stroke();
+      // runway end names just beyond each threshold (when big enough on screen, or when it matters now)
+      const lenPx = Math.hypot(sx(rw.bx, rw.bz) - sx(rw.ax, rw.az), sy(rw.bx, rw.bz) - sy(rw.ax, rw.az));
+      if (rw.le && (lenPx > 24 || role !== '#9ca3af')) {
+        const ux = (sx(rw.bx, rw.bz) - sx(rw.ax, rw.az)) / (lenPx || 1), uy = (sy(rw.bx, rw.bz) - sy(rw.ax, rw.az)) / (lenPx || 1);
+        ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = role === '#9ca3af' ? '#e5e7eb' : role;
+        ctx.fillText(rw.le, sx(rw.ax, rw.az) - ux * 16, sy(rw.ax, rw.az) - uy * 16);
+        ctx.fillText(rw.he, sx(rw.bx, rw.bz) + ux * 16, sy(rw.bx, rw.bz) + uy * 16);
+        ctx.textBaseline = 'alphabetic';
+      }
     });
     ctx.fillStyle = '#38bdf8';
     [this.t1, this.t2].forEach((t) => ctx.fillRect(sx(t.x, t.z) - 3, sy(t.x, t.z) - 2, 6, 4));
@@ -195,6 +216,18 @@ export class MovingMap {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.beginPath(); ctx.arc(tx, ty, 5, 0, Math.PI * 2); ctx.stroke();
+      const ax = sx(state.pos.x, state.pos.z), ay = sy(state.pos.x, state.pos.z);
+      if (Math.hypot(tx - ax, ty - ay) > 60) tag(`${nr.distKm.toFixed(1)} KM`, (ax + tx) / 2, (ay + ty) / 2, '#22d3ee');
+      if (!(state.onGround && sameEnd(nr.end, act))) tag(`LAND ${nr.ident}`, tx, ty - 14, '#22d3ee');
+    }
+    if (act && !(nr && sameEnd(nr.end, act) && !state.onGround)) {
+      const tx = sx(act.thrX, act.thrZ), ty = sy(act.thrX, act.thrZ);
+      const ex2 = sx(act.thrX + act.dirX * 600, act.thrZ + act.dirZ * 600), ey2 = sy(act.thrX + act.dirX * 600, act.thrZ + act.dirZ * 600);
+      const L = Math.hypot(ex2 - tx, ey2 - ty) || 1, ux = (ex2 - tx) / L, uy = (ey2 - ty) / L;
+      ctx.strokeStyle = '#4ade80'; ctx.fillStyle = '#4ade80'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx + ux * 22, ty + uy * 22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx + ux * 28, ty + uy * 28); ctx.lineTo(tx + ux * 20 - uy * 5, ty + uy * 20 + ux * 5); ctx.lineTo(tx + ux * 20 + uy * 5, ty + uy * 20 - ux * 5); ctx.closePath(); ctx.fill();
+      tag(`T/O ${act.ident}`, tx - uy * 18, ty + ux * 18, '#4ade80');
     }
 
     // Phase 8 traffic (cyan) and phase 9 range targets (orange; locked one ringed)
@@ -216,11 +249,14 @@ export class MovingMap {
     ctx.save();
     ctx.translate(sx(state.pos.x, state.pos.z), sy(state.pos.x, state.pos.z));
     ctx.rotate(headingDeg * Math.PI / 180);
-    ctx.fillStyle = '#4ade80';
+    ctx.fillStyle = '#facc15'; ctx.strokeStyle = '#0b1120'; ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.moveTo(0, -9); ctx.lineTo(6, 7); ctx.lineTo(0, 4); ctx.lineTo(-6, 7);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(0, -13); ctx.lineTo(9, 10); ctx.lineTo(0, 5); ctx.lineTo(-9, 10);
+    ctx.closePath(); ctx.stroke(); ctx.fill();
+    ctx.strokeStyle = 'rgba(250,204,21,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(0, -60); ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
+    tag('YOU', sx(state.pos.x, state.pos.z), sy(state.pos.x, state.pos.z) + 22, '#facc15');
     ctx.restore();
 
     // North arrow + scale
@@ -249,6 +285,12 @@ export class MovingMap {
       ctx.font = '10px monospace';
       ctx.fillStyle = '#a5f3fc';
       ctx.fillText(`BRG ${String(Math.round(nr.bearing)).padStart(3, '0')}${nr.etaMin !== null ? `  ~${Math.max(1, Math.round(nr.etaMin))} MIN` : ''}  ${nr.name.slice(0, 18)}  [J] LAND HERE`, 6, 60);
+    }
+    const g = ex && ex.ground;
+    if (g) {
+      ctx.fillStyle = 'rgba(6,12,18,0.85)'; ctx.fillRect(0, 64, W, 17);
+      ctx.fillStyle = '#4ade80'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(g, 6, 76);
     }
 
     // Guidance box

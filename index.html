@@ -449,6 +449,7 @@
     import { Terrain, SEA_LEVEL_Y } from './src/world/terrain.js';
     import { Airports } from './src/world/airports.js';
     import { createVisuals, addSurfaceDetail } from './src/render/visuals.js';
+    import { CrashSequence } from './src/fx/crashSequence.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -775,6 +776,8 @@
 
     // On the ground 200 m past the active runway's threshold, lined up for take-off
     function resetToThreshold() {
+      if (crashFx.active) { crashFx.clear(); flightMsg(`NEW START - ${activeEnd.icao} RWY ${activeEnd.ident}, ready for take-off`, '#4ade80', 4000); }
+      if (aircraft) aircraft.mesh.visible = true;
       const e = activeEnd;
       state.pos.set(e.thrX + e.dirX * 200, e.y + profile.groundHeight, e.thrZ + e.dirZ * 200);
       terrain.prime(state.pos.x, state.pos.z);
@@ -802,6 +805,8 @@
     // TAKE-OFF & LANDING
     // ==========================================
     const landing = { airTime: 0, rotateCued: false, crashResetAt: 0, rollout: false };
+    const crashFx = new CrashSequence(scene);   // eject + parachute, fire, debris, crash camera
+    window.skyforgeCrash = crashFx; // console check: skyforgeCrash.t
     const GLIDE_RAD = 3 * Math.PI / 180;
 
     const flightMsgEl = document.createElement('div');
@@ -818,8 +823,13 @@
 
     function crash(reason) {
       if (landing.crashResetAt) return;
-      flightMsg(`CRASH: ${reason} - resetting to ${activeEnd.icao} RWY ${activeEnd.ident}`, '#ef4444', 3500);
-      landing.crashResetAt = performance.now() + 3000;
+      flightMsg(`CRASH: ${reason} - PILOT EJECTED. New start at ${activeEnd.icao} RWY ${activeEnd.ident} in 10 s`, '#ef4444', 6000);
+      landing.crashResetAt = performance.now() + 1e9;   // the new start comes when the crash scene ends
+      // the airframe's main paint colour, for the debris
+      let paint = 0x8896a8;
+      aircraft.mesh.traverse((o) => { if (paint === 0x8896a8 && o.isMesh && o.material && o.material.color) paint = o.material.color.getHex(); });
+      crashFx.start(state.pos, velBefore, terrain.groundY(state.pos.x, state.pos.z), paint);
+      aircraft.mesh.visible = false;
       state.vel.set(0, 0, 0);
       state.throttle = 0;
       state.power = 0;
@@ -1445,7 +1455,16 @@
       ilsNow = p8.ils;
       tmpFwd.set(0, 0, -1).applyEuler(state.rot);
       combatNow = combat.update(dt, state.pos, tmpFwd);
-      movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null };
+      // on the ground: runway left ahead, or how far the take-off runway is
+      let groundLine = null;
+      if (state.onGround) {
+        const onRw = airports.runwayAt(state.pos.x, state.pos.z, headingNow);
+        const rwEnd = onRw && airports.end(onRw.icao, onRw.ident);
+        if (rwEnd) groundLine = `ON RWY ${onRw.ident}: ${Math.max(0, Math.round(rwEnd.lengthM - onRw.distPast)).toLocaleString('en-IN')} M LEFT OF ${Math.round(rwEnd.lengthM).toLocaleString('en-IN')} M`;
+        else groundLine = `T/O RWY ${activeEnd.ident} ${activeEnd.icao}: ${(Math.hypot(activeEnd.thrX - state.pos.x, activeEnd.thrZ - state.pos.z) / 1000).toFixed(1)} KM (${Math.round(activeEnd.lengthM).toLocaleString('en-IN')} M LONG)`;
+      }
+      movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null,
+        active: activeEnd, ground: groundLine };
       movingMap.draw(state, navData, headingNow, performance.now());
 
       fleetContainer.position.copy(state.pos);
@@ -1541,6 +1560,12 @@
       }
       const curAoA = (state.aoa || 0) * (180 / Math.PI);
       audio.update(currentAircraft, state.power, state.ias, state.isAfterburner, curAoA, state.onGround);
+      if (crashFx.active) {
+        const playing = crashFx.update(dt);
+        camera.layers.set(0);
+        crashFx.applyCamera(camera);
+        if (!playing) resetToThreshold();
+      }
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();
