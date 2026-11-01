@@ -312,8 +312,12 @@ export class MovingMap {
       const turnTxt = Math.abs(nav.turn) < 5 ? 'ON COURSE' : `TURN ${nav.turn > 0 ? 'RIGHT' : 'LEFT'} ${Math.round(Math.abs(nav.turn))} DEG`;
       const altDiff = nav.targetAltFt - nav.altFt;
       const altTxt = Math.abs(altDiff) < 200 ? `ALT ${Math.round(nav.altFt)} OK` : `${altDiff > 0 ? 'CLIMB' : 'DESCEND'} TO ${nav.targetAltFt} FT`;
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(`${turnTxt} | ${altTxt}`, 8, H - 20);
+      const col = (v, y, r) => (v < y ? '#4ade80' : v < r ? '#facc15' : '#ef4444');
+      const hCol = col(Math.abs(nav.turn), 5, 25), aCol = col(Math.abs(altDiff), 300, 1000);
+      ctx.fillStyle = hCol;
+      ctx.fillText(`${turnTxt} |`, 8, H - 20);
+      ctx.fillStyle = aCol;
+      ctx.fillText(` ${altTxt}`, 8 + ctx.measureText(`${turnTxt} |`).width, H - 20);
       ctx.fillStyle = '#94a3b8';
       ctx.font = '10px monospace';
       ctx.fillText(`${nav.destination} in ~${tMins} min | [N] re-plan`, 8, H - 6);

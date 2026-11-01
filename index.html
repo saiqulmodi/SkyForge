@@ -875,6 +875,81 @@
       flightMsgEl._t = setTimeout(() => { flightMsgEl.style.display = 'none'; }, ms);
     }
 
+    // ---- Track guidance: green on track, yellow drifting, red badly off; warnings flash red with a beep ----
+    const cueEl = document.createElement('div');
+    cueEl.id = 'track-cue';
+    cueEl.style.cssText = 'position:fixed;top:128px;left:50%;transform:translateX(-50%);z-index:10002;display:none;' +
+      'padding:6px 16px 7px;border:2px solid;border-radius:8px;font:bold 17px monospace;text-align:center;min-width:300px;' +
+      'background:rgba(6,12,18,0.82);pointer-events:none;text-shadow:0 1px 2px #000;white-space:nowrap;';
+    document.body.appendChild(cueEl);
+    const cueStyle = document.createElement('style');
+    cueStyle.textContent = '@keyframes cueFlash{0%,100%{opacity:1}50%{opacity:.35}} #track-cue.warn{animation:cueFlash .5s infinite}' +
+      ' #track-cue small{display:block;font:12px monospace;opacity:.85;margin-top:2px}';
+    document.head.appendChild(cueStyle);
+    const CUE = { green: '#4ade80', yellow: '#facc15', red: '#ef4444' };
+    let cueBeepAt = 0, cueKey = '';
+    function cueBeep() {
+      try {
+        const ac = cueBeep.ac || (cueBeep.ac = new (window.AudioContext || window.webkitAudioContext)());
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'square'; o.frequency.value = 940; g.gain.value = 0.06;
+        o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.18);
+      } catch (e) { /* audio blocked until the first click */ }
+    }
+    // nav: route guidance (or null); returns nothing, draws the banner
+    function updateTrackCue(nav, headingDeg, terrainY) {
+      if (state.onGround || crashFx.active || twoPlayer) { cueEl.style.display = 'none'; return; }
+      const altFt = amslFt(state.pos.y), aglFt = altFt - amslFt(terrainY);
+      const lvl = (a) => (a === 'red' ? 2 : a === 'yellow' ? 1 : 0);
+      // warnings first (they override the route advice)
+      const ahead = new THREE.Vector3(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y)).multiplyScalar(Math.max(600, Math.hypot(state.vel.x, state.vel.z) * 12));
+      const groundAheadFt = amslFt(terrain.groundY(state.pos.x + ahead.x, state.pos.z + ahead.z));
+      const bankDeg = Math.abs(state.rot.z) * 180 / Math.PI;
+      const nearRunway = movingMap.nearest && movingMap.nearest.distKm < 4;   // on final: low and slow is normal
+      let warn = null;
+      if (aglFt < 400 && state.vel.y < -6 && !nearRunway) warn = ['TERRAIN - PULL UP', 'sinking fast close to the ground: nose up, full power'];
+      else if (groundAheadFt > altFt - 300 && !nearRunway) warn = ['TERRAIN AHEAD - CLIMB', `ground ahead ${Math.round(groundAheadFt).toLocaleString('en-IN')} FT: climb now`];
+      else if (!profile.rotorcraft && state.ias < profile.stallKt * 1.08 && aglFt > 50) warn = ['STALL - NOSE DOWN + POWER', `${Math.round(state.ias)} KT, stall ${profile.stallKt} KT`];
+      else if (bankDeg > 60) warn = ['BANK ANGLE - ROLL LEVEL', `${Math.round(bankDeg)} DEG bank`];
+      if (warn) {
+        cueEl.className = 'warn';
+        cueEl.style.color = CUE.red; cueEl.style.borderColor = CUE.red;
+        cueEl.innerHTML = `&#9888; ${warn[0]}<small>${warn[1]}</small>`;
+        cueEl.style.display = 'block';
+        const now = performance.now();
+        if (now > cueBeepAt) { cueBeep(); cueBeepAt = now + 900; }
+        return;
+      }
+      cueEl.className = '';
+      // where to steer: the route's next waypoint, or the nearest runway when there is no route
+      let turn, target, detail;
+      if (nav && !nav.complete) {
+        turn = nav.turn; target = nav.targetAltFt;
+        detail = `${nav.name} ${nav.distNm.toFixed(1)} NM  ${Math.floor(nav.etaSec / 60)}:${String(Math.round(nav.etaSec % 60)).padStart(2, '0')}  to ${nav.destination}`;
+      } else if (movingMap.nearest) {
+        const nr = movingMap.nearest;
+        turn = ((nr.bearing - headingDeg + 540) % 360) - 180; target = null;
+        detail = `nearest runway ${nr.icao} ${nr.ident} ${nr.distKm.toFixed(1)} KM`;
+      } else { cueEl.style.display = 'none'; return; }
+      const a = Math.abs(turn);
+      const hdg = a < 5 ? ['green', 'ON TRACK'] : a < 25
+        ? ['yellow', `${turn < 0 ? '&#9664; TURN LEFT' : 'TURN RIGHT &#9654;'} ${Math.round(a)}&deg;`]
+        : ['red', `${turn < 0 ? '&#9664;&#9664; TURN LEFT NOW' : 'TURN RIGHT NOW &#9654;&#9654;'} ${Math.round(a)}&deg;`];
+      let alt = null;
+      if (target !== null) {
+        const d = target - altFt, ad = Math.abs(d);
+        alt = ad < 300 ? ['green', `ALT ${Math.round(altFt).toLocaleString('en-IN')} OK`] : ad < 1000
+          ? ['yellow', `${d > 0 ? '&#9650; CLIMB' : '&#9660; DESCEND'} ${Math.round(ad / 100) * 100} FT`]
+          : ['red', `${d > 0 ? '&#9650;&#9650; CLIMB NOW' : '&#9660;&#9660; DESCEND NOW'} TO ${target.toLocaleString('en-IN')}`];
+      }
+      const worst = alt && lvl(alt[0]) > lvl(hdg[0]) ? alt[0] : hdg[0];
+      const part = (x) => `<span style="color:${CUE[x[0]]}">${x[1]}</span>`;
+      const html = `${part(hdg)}${alt ? ' &nbsp;|&nbsp; ' + part(alt) : ''}<small style="color:#cbd5e1">${detail}</small>`;
+      if (html !== cueKey) { cueEl.innerHTML = html; cueKey = html; }
+      cueEl.style.borderColor = CUE[worst];
+      cueEl.style.display = 'block';
+    }
+
     function crash(reason) {
       if (landing.crashResetAt) return;
       flightMsg(`CRASH: ${reason} - PILOT EJECTED. New start at ${activeEnd.icao} RWY ${activeEnd.ident} in 10 s`, '#ef4444', 6000);
@@ -1528,6 +1603,7 @@
       movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null,
         active: activeEnd, ground: groundLine };
       movingMap.draw(state, navData, headingNow, performance.now());
+      updateTrackCue(navData, headingNow, terrain.groundY(state.pos.x, state.pos.z));
 
       fleetContainer.position.copy(state.pos);
       fleetContainer.rotation.copy(state.rot);
