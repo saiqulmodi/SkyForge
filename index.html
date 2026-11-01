@@ -339,6 +339,54 @@
     pointer-events: none !important;
   }
 </style>
+<style id="deck-one-row">
+  /* Control deck (01-Nov-2026, user: AP panel not clear): ONE clearly visible row along the bottom, every panel
+     whole (title + buttons), sliding sideways with the arrow buttons. Overrides the older squeezed dock styles. */
+  html body #control-deck {
+    position: fixed !important; left: 46px !important; right: 46px !important; bottom: 8px !important; top: auto !important;
+    transform: none !important; max-width: none !important; width: auto !important;
+    display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: stretch !important;
+    gap: 8px !important; overflow-x: auto !important; overflow-y: hidden !important; scroll-behavior: smooth;
+    height: auto !important; max-height: 46vh !important;
+    scrollbar-width: none; padding: 0 !important; margin: 0 !important; background: none !important; border: 0 !important;
+    z-index: 10001 !important; pointer-events: auto !important;
+  }
+  html body #control-deck::-webkit-scrollbar { display: none; }
+  html body #control-deck > .panel-box {
+    flex: 0 0 auto !important; display: block !important; position: static !important; min-width: 200px;
+    height: auto !important; max-height: none !important; min-height: 0 !important; overflow: visible !important;
+    padding: 8px 12px !important; margin: 0 !important; background: rgba(15, 23, 42, 0.94) !important;
+    border: 1px solid #38bdf8 !important; border-radius: 8px !important;
+  }
+  html body #control-deck .panel-box b { display: block !important; color: #38bdf8 !important; font-size: 12px !important; margin: 0 0 6px 0 !important; }
+  html body #control-deck .btn-grid { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 5px !important; }
+  html body #control-deck button { font-size: 12px !important; padding: 7px 10px !important; white-space: nowrap !important; }
+  html body #control-deck select { min-width: 230px; }
+  .deck-arrow { position: fixed; z-index: 10002; width: 36px; border: 1px solid #38bdf8; border-radius: 8px;
+    background: rgba(15, 23, 42, 0.94) !important; color: #38bdf8; font-size: 20px !important; padding: 0 !important;
+    cursor: pointer; pointer-events: auto; }
+  .deck-arrow[disabled] { opacity: 0.3; cursor: default; }
+</style>
+<script>
+  // ◀ ▶ beside the control deck: slide one screen of panels; each arrow dims at its end; same height as the deck
+  window.addEventListener('DOMContentLoaded', () => {
+    const deck = document.getElementById('control-deck');
+    if (!deck) return;
+    const mk = (side, txt) => { const b = document.createElement('button'); b.className = 'deck-arrow'; b.textContent = txt; b.setAttribute('aria-label', side === 'left' ? 'Previous panels' : 'Next panels'); b.style[side] = '6px'; document.body.appendChild(b); return b; };
+    const prev = mk('left', '◀'), next = mk('right', '▶');
+    prev.onclick = () => deck.scrollBy({ left: -deck.clientWidth * 0.8 });
+    next.onclick = () => deck.scrollBy({ left: deck.clientWidth * 0.8 });
+    const place = () => {
+      const r = deck.getBoundingClientRect();
+      [prev, next].forEach((b) => { b.style.top = r.top + 'px'; b.style.height = r.height + 'px'; });
+      prev.disabled = deck.scrollLeft <= 2;
+      next.disabled = deck.scrollLeft + deck.clientWidth >= deck.scrollWidth - 2;
+    };
+    deck.addEventListener('scroll', place);
+    window.addEventListener('resize', place);
+    setTimeout(place, 300); setInterval(place, 1500);
+  });
+</script>
 </head>
 <body>
   <img id="sf-badge" src="assets/skyforge-icon.svg" alt="SkyForge" title="SkyForge" style="position:fixed;top:10px;left:10px;width:64px;height:64px;z-index:10003;pointer-events:none;filter:drop-shadow(0 0 6px rgba(56,189,248,.6));">
