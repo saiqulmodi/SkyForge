@@ -4,13 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Skyforge - Full Unified Flight Simulator & Combat Range</title>
+  <link rel="icon" type="image/svg+xml" href="assets/skyforge-icon.svg">
   <style>
     body, html { margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%; background: #000; font-family: monospace; }
     #viewport { width: 100%; height: 100%; display: block; }
     #hud-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
     
     #ui-overlay {
-      position: absolute; top: 12px; left: 12px; color: #00ff66;
+      position: absolute; top: 12px; left: 86px; color: #00ff66;   /* right of the SkyForge emblem */
       text-shadow: 0 0 4px #000; font-size: 12px; line-height: 1.5; pointer-events: none;
     }
     
@@ -340,8 +341,8 @@
 </style>
 </head>
 <body>
+  <img id="sf-badge" src="assets/skyforge-icon.svg" alt="SkyForge" title="SkyForge" style="position:fixed;top:10px;left:10px;width:64px;height:64px;z-index:10003;pointer-events:none;filter:drop-shadow(0 0 6px rgba(56,189,248,.6));">
   <div id="ui-overlay">
-    <b>SKYFORGE SIMULATOR — UNIFIED ENGINE (SUPERSONIC PROFILE)</b><br>
     Controls: [W/S] Pitch / Cyclic | [A/D] Roll / Cyclic | [Q/E] Rudder / Yaw<br>
     Power: [Shift] Throttle / Afterburner | [Ctrl] Throttle Down | [B] Wheel Brakes | [L] Final Approach (active runway) | [M] Map size | [N] Re-plan route | [V] NAV autopilot (follows the route) | [J] Land at the nearest runway | [P] 2 players on one screen (second PS5 controller flies P2)<br>
     Fighter range: [Space] gun | [F] missile on radar lock (orange box) | ILS needles appear on final<br>
