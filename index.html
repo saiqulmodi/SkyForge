@@ -46,8 +46,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three": "./vendor/three/build/three.module.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
       }
     }
   </script>
@@ -888,6 +888,7 @@
 
     // On the ground 200 m past the active runway's threshold, lined up for take-off
     function resetToThreshold() {
+      flightEnd(false);
       if (crashFx.active) { crashFx.clear(); flightMsg(`NEW START - ${activeEnd.icao} RWY ${activeEnd.ident}, ready for take-off`, '#4ade80', 4000); }
       if (aircraft) aircraft.mesh.visible = true;
       const e = activeEnd;
@@ -1008,10 +1009,29 @@
       cueEl.style.display = 'block';
     }
 
+    // ---- Stratos analytics: one game = one flight, from leaving the ground to landing (level_complete) or crash
+    // (game_over), with the seconds flown. Only the shared Stratos script; does nothing outside stratos.games. ----
+    function track(name, details) {
+      try { const S = window.Stratos || (window.parent !== window ? window.parent.Stratos : null); if (S) S.track(name, details); } catch (e) { /* never break the game */ }
+    }
+    let flightStartedAt = 0;
+    function flightStart() {
+      if (flightStartedAt) return;
+      flightStartedAt = Date.now();
+      track('level_start', { level: currentAircraft, airport: activeEnd.icao });
+    }
+    function flightEnd(landed, extra = {}) {
+      if (!flightStartedAt) return;
+      const seconds = Math.round((Date.now() - flightStartedAt) / 1000);
+      flightStartedAt = 0;
+      track(landed ? 'level_complete' : 'game_over', Object.assign({ level: currentAircraft, seconds }, extra));
+    }
+
     function crash(reason) {
       if (landing.crashResetAt) return;
       flightMsg(`CRASH: ${reason} - PILOT EJECTED. New start at ${activeEnd.icao} RWY ${activeEnd.ident} in 10 s`, '#ef4444', 6000);
       landing.crashResetAt = performance.now() + 1e9;   // the new start comes when the crash scene ends
+      flightEnd(false);
       // the airframe's main paint colour, for the debris
       let paint = 0x8896a8;
       aircraft.mesh.traverse((o) => { if (paint === 0x8896a8 && o.isMesh && o.material && o.material.color) paint = o.material.color.getHex(); });
@@ -1037,7 +1057,7 @@
       if (profile.rotorcraft) {
         if (fpm > 800) crash(`HARD LANDING ${fpm} FPM`);
         else if (state.ias > 40) crash(onHigherGround ? 'TERRAIN IMPACT' : `GROUND CONTACT AT ${Math.round(state.ias)} KT`);
-        else flightMsg(`LANDED - ${fpm} FPM${rwy ? ` on ${rwy.icao} RWY ${rwy.ident}` : ''}`, '#4ade80');
+        else { flightMsg(`LANDED - ${fpm} FPM${rwy ? ` on ${rwy.icao} RWY ${rwy.ident}` : ''}`, '#4ade80'); flightEnd(true, { fpm }); }
         return;
       }
       if (fpm > 900) return crash(`HARD LANDING ${fpm} FPM`);
@@ -1049,6 +1069,7 @@
       const arrived = destEnd && rwy.icao === destEnd.icao && rwy.icao !== landing.depIcao;
       const trip = arrived && landing.depMs ? ` - ARRIVED from ${landing.depIcao}, flight time ${Math.round((performance.now() - landing.depMs) / 60000)} min` : '';
       flightMsg(`${grade} LANDING - ${fpm} FPM, ${rwy.icao} RWY ${rwy.ident}, ${rwy.distPast} M past threshold${trip}. Brakes: B / L3`, '#4ade80', 9000);
+      flightEnd(true, { fpm, airport: rwy.icao });
     }
 
     // Puts the aircraft on a 3 degree final to the active runway (fixed-wing 8 km out, helicopter 1.5 km)
@@ -1756,6 +1777,7 @@
       }
       const curAoA = (state.aoa || 0) * (180 / Math.PI);
       audio.update(currentAircraft, state.power, state.ias, state.isAfterburner, curAoA, state.onGround);
+      if (!state.onGround && !crashFx.active) flightStart();
       if (crashFx.active) {
         const playing = crashFx.update(dt);
         camera.layers.set(0);
