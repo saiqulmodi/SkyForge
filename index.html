@@ -835,7 +835,9 @@
       landing.airTime = 0;
       landing.rollout = !profile.rotorcraft;
       const fpm = Math.round(sinkMs * 196.85);
-      const rollDeg = Math.abs(state.rot.z) * 180 / Math.PI;
+      const rollDeg = Math.abs(landing.cRoll ?? state.rot.z) * 180 / Math.PI;
+      const pitchAtContact = landing.cPitch ?? state.rot.x;
+      landing.cPitch = landing.cRoll = undefined;
       const headingNowDeg = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
       const rwy = airports.runwayAt(state.pos.x, state.pos.z, headingNowDeg); // any airport's runway
       const onHigherGround = terrain.groundY(state.pos.x, state.pos.z) > 30; // hillside, not a field
@@ -847,7 +849,8 @@
       }
       if (fpm > 900) return crash(`HARD LANDING ${fpm} FPM`);
       if (rollDeg > 15) return crash(`WINGTIP STRIKE (${Math.round(rollDeg)} DEG BANK)`);
-      if (state.rot.x < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
+      if (pitchAtContact < -0.09) return crash('NOSE-FIRST TOUCHDOWN');
+      if (profile.approachKt && state.ias > profile.approachKt * 1.5) return crash(`TOUCHDOWN FAR TOO FAST (${Math.round(state.ias)} KT)`);
       if (!rwy && state.ias > 40) return crash(onHigherGround ? 'TERRAIN IMPACT' : 'OFF-RUNWAY TOUCHDOWN');
       const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
       const arrived = destEnd && rwy.icao === destEnd.icao && rwy.icao !== landing.depIcao;
@@ -1341,6 +1344,8 @@
         state.vel.z = fwdDir.z * along + (state.vel.z - fwdDir.z * along) * slipKeep;
 
         if (wheelsDown) {
+          // attitude at the moment of contact (the nose / wings are levelled just below)
+          if (!state.prevOnGround) { landing.cPitch = state.rot.x; landing.cRoll = state.rot.z; }
           state.pos.y = groundHeight;
           state.onGround = true;
           if (state.rot.x > 0.22) state.rot.x = 0.22;
