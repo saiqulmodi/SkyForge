@@ -340,28 +340,31 @@
   }
 </style>
 <style id="deck-one-row">
-  /* Control deck (01-Nov-2026, user: AP panel not clear): ONE clearly visible row along the bottom, every panel
-     whole (title + buttons), sliding sideways with the arrow buttons. Overrides the older squeezed dock styles. */
+  /* Control deck (01-Nov-2026, user): ONE slim line of controls along the bottom so the aircraft stays in view;
+     each panel is a single line (its title, then its buttons); ◀ ▶ slide to the next panels and back.
+     Overrides the older squeezed dock styles. */
   html body #control-deck {
     position: fixed !important; left: 46px !important; right: 46px !important; bottom: 8px !important; top: auto !important;
-    transform: none !important; max-width: none !important; width: auto !important;
+    transform: none !important; max-width: none !important; width: auto !important; height: auto !important;
     display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: stretch !important;
     gap: 8px !important; overflow-x: auto !important; overflow-y: hidden !important; scroll-behavior: smooth;
-    height: auto !important; max-height: 46vh !important;
-    scrollbar-width: none; padding: 0 !important; margin: 0 !important; background: none !important; border: 0 !important;
-    z-index: 10001 !important; pointer-events: auto !important;
+    scroll-snap-type: x proximity; scrollbar-width: none; padding: 0 !important; margin: 0 !important;
+    background: none !important; border: 0 !important; z-index: 10001 !important; pointer-events: auto !important;
   }
   html body #control-deck::-webkit-scrollbar { display: none; }
   html body #control-deck > .panel-box {
-    flex: 0 0 auto !important; display: block !important; position: static !important; min-width: 200px;
-    height: auto !important; max-height: none !important; min-height: 0 !important; overflow: visible !important;
-    padding: 8px 12px !important; margin: 0 !important; background: rgba(15, 23, 42, 0.94) !important;
+    flex: 0 0 auto !important; display: flex !important; flex-direction: row !important; align-items: center !important;
+    gap: 6px !important; position: static !important; height: auto !important; max-height: none !important;
+    min-height: 0 !important; overflow: visible !important; scroll-snap-align: start;
+    padding: 5px 10px !important; margin: 0 !important; background: rgba(15, 23, 42, 0.92) !important;
     border: 1px solid #38bdf8 !important; border-radius: 8px !important;
   }
-  html body #control-deck .panel-box b { display: block !important; color: #38bdf8 !important; font-size: 12px !important; margin: 0 0 6px 0 !important; }
-  html body #control-deck .btn-grid { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 5px !important; }
-  html body #control-deck button { font-size: 12px !important; padding: 7px 10px !important; white-space: nowrap !important; }
-  html body #control-deck select { min-width: 230px; }
+  html body #control-deck .panel-box b { display: inline-block !important; color: #38bdf8 !important; font-size: 11px !important;
+    margin: 0 4px 0 0 !important; white-space: nowrap !important; }
+  html body #control-deck .btn-grid { display: flex !important; flex-direction: row !important; gap: 4px !important; margin: 0 !important; }
+  html body #control-deck button { font-size: 12px !important; padding: 6px 10px !important; white-space: nowrap !important; }
+  html body #control-deck select { min-width: 190px; margin: 0 !important; display: inline-block !important; }
+  html body #control-deck #ap-readout { margin: 0 0 0 4px !important; white-space: nowrap; }
   .deck-arrow { position: fixed; z-index: 10002; width: 36px; border: 1px solid #38bdf8; border-radius: 8px;
     background: rgba(15, 23, 42, 0.94) !important; color: #38bdf8; font-size: 20px !important; padding: 0 !important;
     cursor: pointer; pointer-events: auto; }
@@ -374,8 +377,17 @@
     if (!deck) return;
     const mk = (side, txt) => { const b = document.createElement('button'); b.className = 'deck-arrow'; b.textContent = txt; b.setAttribute('aria-label', side === 'left' ? 'Previous panels' : 'Next panels'); b.style[side] = '6px'; document.body.appendChild(b); return b; };
     const prev = mk('left', '◀'), next = mk('right', '▶');
-    prev.onclick = () => deck.scrollBy({ left: -deck.clientWidth * 0.8 });
-    next.onclick = () => deck.scrollBy({ left: deck.clientWidth * 0.8 });
+    const panels = () => [...deck.children];
+    next.onclick = () => {                      // the first panel cut off on the right comes fully into view
+      const edge = deck.scrollLeft + deck.clientWidth;
+      const p = panels().find((el) => el.offsetLeft + el.offsetWidth > edge + 2);
+      if (p) deck.scrollTo({ left: Math.min(p.offsetLeft, deck.scrollWidth - deck.clientWidth) });
+    };
+    prev.onclick = () => {                      // back by one screen of panels
+      const target = deck.scrollLeft - deck.clientWidth;
+      const p = panels().find((el) => el.offsetLeft >= target - 2);
+      deck.scrollTo({ left: Math.max(0, p ? p.offsetLeft : 0) });
+    };
     const place = () => {
       const r = deck.getBoundingClientRect();
       [prev, next].forEach((b) => { b.style.top = r.top + 'px'; b.style.height = r.height + 'px'; });
@@ -1360,8 +1372,11 @@
         const rollRate = profile.maxRollRate;
 
         const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
-        state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08) * dt;
-        state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3) * dt;
+        // Attitude holds like a real aircraft when the stick is let go (user, 01-Nov-2026); only the
+        // autopilot (AP / ALT HOLD / NAV) brings the wings and nose back to level
+        const levelK = state.apMaster ? 1 : 0;
+        state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08 * levelK) * dt;
+        state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3 * levelK) * dt;
 
         state.prevOnGround = state.onGround;
         const groundHeight = terrainY + profile.groundHeight;

@@ -127,8 +127,9 @@ export class Wingman {
       stepRotorcraft(s, { pitch: pIn, roll: rIn, yaw: yIn }, p, dt, terrainY);
     } else {
       const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
-      s.rot.x += (pIn * p.maxPitchRate * cEff - s.rot.x * 0.08) * dt;
-      s.rot.z += (-rIn * p.maxRollRate * cEff - s.rot.z * 0.3) * dt;
+      // attitude holds when the stick is let go (same as player 1; P2 has no autopilot)
+      s.rot.x += pIn * p.maxPitchRate * cEff * dt;
+      s.rot.z += -rIn * p.maxRollRate * cEff * dt;
       s.prevOnGround = s.onGround;
       const groundHeight = terrainY + p.groundHeight;
       const wheelsDown = s.pos.y <= groundHeight;
