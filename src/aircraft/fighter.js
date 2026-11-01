@@ -70,6 +70,9 @@ export function createFighter() {
   finShape.closePath();
 
   const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: 0.06, bevelEnabled: false });
+  // the shape is drawn side-on (chord along x); turn it so the chord runs nose-to-tail (-z = aft here)
+  finGeo.rotateY(Math.PI / 2);
+  finGeo.translate(-0.03, 0, 0);
 
   // Left Vertical Stabilizer (canted left)
   const leftFin = new THREE.Mesh(finGeo, radarAbsorbentMat);

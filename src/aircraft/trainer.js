@@ -115,16 +115,19 @@ export class TrainerModel {
     finShape.lineTo(2.4, 0);
     finShape.closePath();
 
-    const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: 0.08, bevelEnabled: true });
-    
+    const finGeo = new THREE.ExtrudeGeometry(finShape, { depth: 0.08, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.02 });
+    // the shape is drawn side-on (chord along x); turn it so the chord runs nose-to-tail (+z = aft here)
+    finGeo.rotateY(-Math.PI / 2);
+    finGeo.translate(0.04, 0, 0);
+
     // Left fin
     const leftFin = new THREE.Mesh(finGeo, panelMat);
-    leftFin.position.set(-1.1, 0.5, 2.2);
+    leftFin.position.set(-1.1, 0.5, 1.9);
     leftFin.rotation.z = 0.48; // outward cant
     
     // Right fin
     const rightFin = new THREE.Mesh(finGeo, panelMat);
-    rightFin.position.set(1.1, 0.5, 2.2);
+    rightFin.position.set(1.1, 0.5, 1.9);
     rightFin.rotation.z = -0.48;
 
     fGroup.add(leftFin, rightFin);

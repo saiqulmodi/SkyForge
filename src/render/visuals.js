@@ -252,7 +252,8 @@ function detectQuality(renderer) {
   } catch (e) { /* no info */ }
   const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
   const discrete = /NVIDIA|GeForce|RTX|GTX|Radeon RX|Radeon Pro|Arc A/i.test(gpu);
-  return { tier: mobile ? 'low' : discrete ? 'high' : 'medium', manual: false, gpu };
+  // best picture first on every computer (user: best graphics); phones start light
+  return { tier: mobile ? 'low' : 'high', manual: false, gpu, discrete, mobile };
 }
 
 export async function createVisuals({ renderer, scene, camera, sunLight, hemiLight }) {
@@ -469,7 +470,8 @@ export async function createVisuals({ renderer, scene, camera, sunLight, hemiLig
     const fps = fpsWin.frames * 1000 / (now - fpsWin.t0);
     fpsWin.t0 = now; fpsWin.frames = 0;
     if (st.manual || now - fpsWin.started < 8000 || document.hidden) return;
-    if (fps < 24 && st.quality !== 'low') {
+    const floor = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) ? 'low' : 'medium';   // computers keep shadows
+    if (fps < 24 && st.quality !== 'low' && st.quality !== floor) {
       const next = st.quality === 'high' ? 'medium' : 'low';
       console.info(`[visuals] ${fps.toFixed(0)} FPS - graphics ${st.quality} -> ${next}`);
       setQuality(next, false);
