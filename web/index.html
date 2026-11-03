@@ -377,7 +377,7 @@
   html body #control-deck { justify-content: safe center !important; backdrop-filter: none !important; }
   .deck-arrow { display: none !important; }
   /* 03-Nov-2026 (user): no write-up in the centre of the screen on any version (warning sounds stay) */
-  #flight-msg, #track-cue { display: none !important; }
+  #flight-msg, #track-cue, #audio-banner { display: none !important; }
   /* Web edition: the fighter only */
   body[data-edition="web"] #btn-trainer, body[data-edition="web"] #btn-airliner, body[data-edition="web"] #btn-heli { display: none !important; }
 </style>
@@ -576,6 +576,7 @@
     import { Airports } from './src/world/airports.js';
     import { createVisuals, addSurfaceDetail } from './src/render/visuals.js';
     import { CrashSequence } from './src/fx/crashSequence.js';
+    import { FighterFx } from './src/fx/fighterFx.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -716,6 +717,27 @@
         gain.connect(this.masterCompressor);
         source.start();
         source.stop(this.ctx.currentTime + 0.1);
+      }
+
+      // Sonic boom as the aircraft goes through Mach 1: a deep double thump
+      playBoom() {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        [0, 0.14].forEach((at) => {
+          const source = this.ctx.createBufferSource();
+          source.buffer = this.cannonBuffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.setValueAtTime(170, this.ctx.currentTime);
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.0001, this.ctx.currentTime + at);
+          gain.gain.exponentialRampToValueAtTime(0.9, this.ctx.currentTime + at + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + at + 0.55);
+          source.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.masterCompressor);
+          source.start(this.ctx.currentTime + at);
+          source.stop(this.ctx.currentTime + at + 0.6);
+        });
       }
 
       playTouchdown() {
@@ -1522,6 +1544,13 @@
     // Real time per frame: flight runs at true speed on a slow phone or a 120 Hz screen alike
     let dt = 1 / 60;
     let lastFrameMs = 0;
+    let lastMach = 0;
+    const fighterFx = new FighterFx(fleetContainer, scene, LAYER_EXTERIOR);
+    const chaseUp = new THREE.Vector3(0, 1, 0);
+    const blendUp = new THREE.Vector3();
+    const upTurn = new THREE.Quaternion();
+    const upStep = new THREE.Quaternion();
+    window.skyforgeCamera = camera;   // console check
 
     // Cockpit camera / HUD helpers
     let gLoad = 1.0;
@@ -1638,7 +1667,7 @@
         state.holdGamma = null;
         state.stick = 0;
         const vr = profile.vr;
-        const pitchRate = profile.maxPitchRate;
+        const pitchRate = Math.min(profile.maxPitchRate, 0.35);   // rotation for take-off is a slow, steady raise of the nose
         const rollRate = profile.maxRollRate;
 
         const cEff = Math.max(0.35, Math.min(1.2, forwardSpeed / 25));
@@ -1681,9 +1710,11 @@
           if (!state.prevOnGround) { landing.cPitch = state.rot.x; landing.cRoll = state.rot.z; }
           state.pos.y = groundHeight;
           state.onGround = true;
-          if (state.rot.x > 0.22) state.rot.x = 0.22;
-          if (state.rot.x < 0.0) state.rot.x = 0.0;
-          state.rot.z *= 0.85;
+          // Tail-scrape and wheels-level limits are reached smoothly, never snapped
+          const settle = 1 - Math.exp(-6 * dt);
+          if (state.rot.x > 0.22) state.rot.x += (0.22 - state.rot.x) * settle;
+          if (state.rot.x < 0.0) state.rot.x += (0.0 - state.rot.x) * settle;
+          state.rot.z *= Math.exp(-8 * dt);
 
           // Ground roll: rolling resistance at idle, wheel brakes (B / L3) for the landing rollout
           const groundDecel = (state.throttle < 0.05 ? 1.2 : 0) + (braking ? 5.0 * phase7.brakeFactor(state.ias) : 0);
@@ -1807,8 +1838,12 @@
         throttle: state.throttle,
         power: state.power,
         isAfterburner: state.isAfterburner,
-        iasKt: state.ias
+        iasKt: state.ias,
+        gearDown: state.onGround || heightAboveGroundFt() < 300
       });
+      fighterFx.update(dt, state, currentAircraft === 'fighter');
+      if (state.mach >= 1 && lastMach < 1 && !state.onGround) audio.playBoom();
+      lastMach = state.mach;
 
       bodyVel.copy(state.vel).applyQuaternion(headQuat.copy(bodyQuat).invert());
       const fwdSpeed = -bodyVel.z;
@@ -1863,7 +1898,21 @@
         if (chaseOffsetSmooth.lengthSq() === 0 || camera.position.distanceTo(state.pos) > 1000) chaseOffsetSmooth.copy(camOffset);
         else chaseOffsetSmooth.lerp(camOffset, 1 - Math.exp(-6 * dt));
         camera.position.copy(state.pos).add(chaseOffsetSmooth);
+        // Level flight keeps the horizon level. Near the vertical or inverted the camera goes with the airframe's own
+        // up, eased, so it follows through loops and rolls without flipping at the top.
+        const pitchShare = THREE.MathUtils.smoothstep(Math.abs(state.rot.x), 0.8, 1.25);
+        const invertShare = THREE.MathUtils.smoothstep(-Math.cos(state.rot.z), -0.45, 0.25);
+        const share = Math.max(pitchShare, invertShare);
+        blendUp.set(0, 1 - share, 0).addScaledVector(tmpUp, share);
+        if (blendUp.lengthSq() > 1e-4) {
+          // Turn the camera's up towards it at a limited rate (never faster than 2 rad/s), whichever way it has to go
+          upTurn.setFromUnitVectors(chaseUp, blendUp.normalize());
+          upStep.identity().rotateTowards(upTurn, 2 * dt);
+          chaseUp.applyQuaternion(upStep).normalize();
+        }
+        camera.up.copy(chaseUp);
         camera.lookAt(state.pos.clone().add(new THREE.Vector3(0, 1.0, -4.0).applyEuler(state.rot)));
+        camera.up.set(0, 1, 0);
       }
 
       if (twoPlayer) {

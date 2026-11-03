@@ -14,6 +14,7 @@ import * as THREE from 'three';
 const G = 9.81;
 const KT_TO_MS = 1 / 1.94384;
 const RHO0 = 1.225;
+const AB_GATE = 0.7;
 
 // thrust, afterburner: full-power jet acceleration at sea level (m/s2); powerPerKg: propeller power (W/kg);
 // wave: drag factor from Mach 0.85 to 1.25; nMax, nMin: g limits; roll, pitch, yaw: rad/s at full control;
@@ -49,15 +50,25 @@ const dragShare = (cl, p) => Math.abs(cl) / (Math.PI * p.oswaldEfficiency * p.as
 
 // Parasite + wave drag per unit mass
 function parasiteDrag(v, p, air, atm, stalled) {
+  // Wave drag rises smoothly towards Mach 1 and eases off well past it
   const mach = v / atm.soundMs;
-  const cd = p.cd0 * (mach > 0.85 && mach < 1.25 ? air.wave : 1) + (stalled ? 0.3 : 0);
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const waveShare = smooth(0.8, 0.98, mach) * (1 - smooth(1.2, 1.45, mach));
+  const cd = p.cd0 * (1 + (air.wave - 1) * waveShare) + (stalled ? 0.3 : 0);
   return 0.5 * RHO0 * atm.sigma * v * v * p.wingArea * cd / p.mass;
 }
 
 // Engine thrust per unit mass at this power, speed and air density
 function thrustAccel(power01, afterburner, v, air, atm) {
   if (air.powerPerKg) return power01 * Math.min(air.thrust * atm.sigma, air.powerPerKg * atm.sigma / Math.max(1, v));
-  return power01 * (afterburner && air.afterburner ? air.afterburner : air.thrust) * atm.sigma ** 0.7;
+  // Afterburning jet: 70 % throttle is full dry thrust, and thrust climbs on without a jump as the burner lights
+  if (air.afterburner) {
+    const thrust = power01 <= AB_GATE
+      ? air.thrust * power01 / AB_GATE
+      : air.thrust + (air.afterburner - air.thrust) * (power01 - AB_GATE) / (1 - AB_GATE);
+    return thrust * atm.sigma ** 0.7;
+  }
+  return power01 * air.thrust * atm.sigma ** 0.7;
 }
 
 // Take-off / landing roll: engine against air drag and tyre rolling resistance (0.02 g)
@@ -71,7 +82,8 @@ export function trimThrottle(type, p, v, gammaRad, hM) {
   const air = AIR[type], atm = atmosphere(hM);
   const cl = clMaxOf(p) * (p.stallKt * KT_TO_MS / v) ** 2 / atm.sigma;
   const drag = parasiteDrag(v, p, air, atm, false) + G * dragShare(cl, p);
-  return clamp((drag + G * Math.sin(gammaRad)) / thrustAccel(1, false, v, air, atm), 0, 1);
+  const fullDry = air.afterburner ? AB_GATE : 1;
+  return clamp((drag + G * Math.sin(gammaRad)) / thrustAccel(fullDry, false, v, air, atm) * fullDry, 0, fullDry);
 }
 
 // Angle of attack for steady flight at speed v
