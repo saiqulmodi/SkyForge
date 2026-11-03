@@ -369,6 +369,11 @@
     background: rgba(15, 23, 42, 0.94) !important; color: #38bdf8; font-size: 20px !important; padding: 0 !important;
     cursor: pointer; pointer-events: auto; }
   .deck-arrow[disabled] { opacity: 0.3; cursor: default; }
+  /* 03-Nov-2026 (user): every version shows only the first two tabs at the bottom (aircraft, camera).
+     The other panels stay in the page hidden, so their keyboard keys keep working. */
+  html body #control-deck > .panel-box:nth-child(n+3) { display: none !important; }
+  html body #control-deck { justify-content: safe center !important; backdrop-filter: none !important; }
+  .deck-arrow { display: none !important; }
 </style>
 <script>
   // ◀ ▶ beside the control deck: slide one screen of panels; each arrow dims at its end; same height as the deck
@@ -924,6 +929,7 @@
     const GLIDE_RAD = 3 * Math.PI / 180;
 
     const flightMsgEl = document.createElement('div');
+    flightMsgEl.id = 'flight-msg';
     flightMsgEl.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:10002;padding:8px 18px;' +
       'font:bold 15px monospace;background:rgba(6,12,18,0.88);border:1px solid currentColor;display:none;text-align:center;';
     document.body.appendChild(flightMsgEl);
@@ -1176,7 +1182,7 @@
       });
     });
 
-    selectAircraft('trainer');
+    selectAircraft('fighter'); // the fighter is always the starting aircraft (user, 03-Nov-2026)
 
     // ==========================================
     // 5. CONTROLS & AUTOPILOT
@@ -1321,6 +1327,7 @@
     let lastGunShotMs = 0;
 
     const padNote = document.createElement('div');
+    padNote.id = 'pad-note';
     padNote.style.cssText = 'position:fixed;bottom:96px;right:12px;z-index:10002;padding:6px 12px;font:bold 12px monospace;' +
       'color:#00ffcc;background:rgba(6,12,18,0.88);border:1px solid rgba(0,255,170,0.4);display:none;';
     document.body.appendChild(padNote);
@@ -1392,14 +1399,14 @@
     window.addEventListener('resize', resize);
     resize();
 
-    initTouchControls(movingMap.canvas); // phones and tablets only: on-screen flight buttons
+    initTouchControls(movingMap); // phones and tablets only: on-screen flight buttons, clean screen
+    const touchPlay = isTouchPlay();
 
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
       if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
       const cx = 120;
-      // On a phone the corner holds the touch buttons, so this panel sits higher, under the emblem / map
-      const cy = isTouchPlay() ? (hudCanvas.width > hudCanvas.height ? 165 : 370) : hudCanvas.height - 120;
+      const cy = hudCanvas.height - 120;
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
       ctx.fillRect(cx - 95, cy - 85, 190, 170);
@@ -1741,7 +1748,7 @@
 
       if (cameraMode === 'cockpit') {
         camera.layers.set(0);
-        camera.layers.enable(LAYER_COCKPIT);
+        if (!touchPlay) camera.layers.enable(LAYER_COCKPIT); // phones: clear view of the runway, no cockpit panels
 
         // Head shake from G-load above 1.5 G and transonic Mach buffet; head pushed down under positive G
         const buffet = Math.max(0, 1 - Math.abs(state.mach - 1.0) / 0.2) * (state.mach > 0.85 ? 1 : 0);

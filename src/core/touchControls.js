@@ -19,6 +19,10 @@ const ICONS = {
 };
 
 const CSS = `
+  /* Phones show only the view, the two tabs, the map and the flight buttons (user, 03-Nov-2026) */
+  #sf-badge, #audio-banner, #hud-canvas, #flight-msg, #track-cue, #pad-note, #wingman-hud { display: none !important; }
+  html body #control-deck { left: 8px !important; right: 8px !important; }
+  .deck-pop-btn .t { display: none; }
   nav.tc { position: fixed; z-index: 10004; bottom: 54px; touch-action: none; user-select: none; -webkit-user-select: none;
     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
   #tc-left { left: 8px; display: grid; gap: 6px; grid-template-columns: repeat(5, 54px); }
@@ -46,8 +50,10 @@ export const isTouchPlay = () => window.matchMedia('(hover: none) and (pointer: 
 
 const sendKey = (type, code) => window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true }));
 
-export function initTouchControls(mapCanvas) {
+export function initTouchControls(map) {
   if (!isTouchPlay()) return;
+  const mapCanvas = map.canvas;
+  map.simple = true;
 
   const style = document.createElement('style');
   style.id = 'touch-controls';
@@ -145,10 +151,10 @@ export function initTouchControls(mapCanvas) {
   pad.addEventListener('contextmenu', (e) => e.preventDefault());
   releasers.push(endPad);
 
-  // The map stays clear of the buttons: smaller on a short landscape screen, never wider than a narrow one
+  // The map stays in the corner, clear of the buttons: smaller on a phone, never wider than a narrow screen
   const fitMap = () => {
     const w = mapCanvas.width, vw = window.innerWidth, vh = window.innerHeight;
-    let s = (vw > vh && vh < 500 && w <= 260) ? 0.7 : 1;
+    let s = (Math.min(vw, vh) < 500 && w <= 260) ? 0.7 : 1;
     s = Math.min(s, (vw - 24) / w);
     mapCanvas.style.transformOrigin = 'top right';
     mapCanvas.style.transform = s < 1 ? `scale(${s})` : '';

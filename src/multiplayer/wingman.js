@@ -30,6 +30,7 @@ export class Wingman {
     this.missiles = 6;
     this.active = false;
     this.hud = document.createElement('div');
+    this.hud.id = 'wingman-hud';
     this.hud.style.cssText = 'position:fixed;bottom:96px;right:12px;z-index:10002;padding:8px 12px;font:bold 13px monospace;' +
       'color:#fbbf24;background:rgba(6,12,18,0.82);border:1px solid rgba(251,191,36,0.6);border-radius:4px;display:none;pointer-events:none;white-space:pre;';
     document.body.appendChild(this.hud);
