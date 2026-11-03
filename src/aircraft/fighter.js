@@ -152,9 +152,9 @@ export function createFighter() {
       maxRollRate: 3.0,
       maxPitchRate: 1.8,
       maxYawRate: 0.5,
-      vr: 110,
-      stallKt: 92,     // clean stall speed (lift model)
-      approachKt: 135, // ~1.45 x stall: keeps the nose low enough to see the runway
+      vr: 135,         // 1.13 x stall
+      stallKt: 119,    // from L = 1/2 rho V^2 S CLmax with this aircraft's mass and wing (tools/validate_flight.py)
+      approachKt: 160, // 1.35 x stall
       groundThrust: 65.0,
       groundHeight: 1.2,
       mass: 13300, wingArea: 42.7, aspectRatio: 2.7, oswaldEfficiency: 0.7, cd0: 0.02, cl0: 0.1,

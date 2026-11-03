@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- full = all aircraft, not for Stratos. tools/build_web.py makes the fighter-only web edition (web/) for Stratos. -->
+  <meta name="skyforge-edition" content="full">
   <title>Skyforge - Full Unified Flight Simulator & Combat Range</title>
   <link rel="icon" type="image/svg+xml" href="assets/skyforge-icon.svg">
   <style>
@@ -376,6 +378,8 @@
   .deck-arrow { display: none !important; }
   /* 03-Nov-2026 (user): no write-up in the centre of the screen on any version (warning sounds stay) */
   #flight-msg, #track-cue { display: none !important; }
+  /* Web edition: the fighter only */
+  body[data-edition="web"] #btn-trainer, body[data-edition="web"] #btn-airliner, body[data-edition="web"] #btn-heli { display: none !important; }
 </style>
 <script>
   // ◀ ▶ beside the control deck: slide one screen of panels; each arrow dims at its end; same height as the deck
@@ -486,6 +490,7 @@
           <button id="btn-cam" onclick="toggleCameraView()" class="active">VIEW: COCKPIT [C]</button>
           <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
           <button onclick="startApproach()">APPROACH [L]</button>
+          <button id="btn-sound" onclick="toggleSound()" class="active">SOUND</button>
       </div>
     </div>
 
@@ -555,7 +560,7 @@
     import * as THREE from 'three';
     import { FleetManager } from './src/aircraft/FleetManager.js';
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
-    import { stepFixedWingAir, groundRollAccel, trimThrottle, trimAlpha, atmosphere } from './src/physics/flight.js';
+    import { stepFixedWingAir, groundRollAccel, trimThrottle, trimAlpha, atmosphere, AIR } from './src/physics/flight.js';
     import { GamepadInput } from './src/core/gamepad.js';
     import { initTouchControls, isTouchPlay } from './src/core/touchControls.js';
     import { initPhase6Environment } from './src/environment/phase6/index.js';
@@ -731,6 +736,13 @@
 
     const audio = new ProceduralAudioEngine();
     window.initAudio = () => audio.init();
+    // Sound on / off, in the camera tab (Stratos: a clear mute button)
+    window.toggleSound = () => {
+      audio.init();
+      audio.muted = !audio.muted;
+      if (audio.muted) audio.ctx.suspend(); else audio.ctx.resume();
+      document.getElementById('btn-sound').classList.toggle('active', !audio.muted);
+    };
     window.addEventListener('keydown', () => audio.init(), { once: true });
     window.addEventListener('pointerdown', () => audio.init(), { once: true });
 
@@ -873,8 +885,11 @@
     let cockpit = null;  // its 3D cockpit
     let profile = null;  // active flight profile (pushed into aero.js by FleetManager)
 
+    const WEB_EDITION = document.querySelector('meta[name="skyforge-edition"]').content === 'web';
+    document.body.dataset.edition = WEB_EDITION ? 'web' : 'full';
     window.selectAircraft = (type) => {
       if (type === currentAircraft) return;
+      if (WEB_EDITION && type !== 'fighter') return;   // the web edition is the fighter only
       aircraft = fleet.switchTo(type);
       cockpit = fleet.cockpit;
       visuals.enhanceAircraft(aircraft.mesh, cockpit.group);
@@ -901,6 +916,12 @@
       state.rot.set(0, yawFor(e.dirX, e.dirZ), 0);
       state.vel.set(0, 0, 0);
       state.altZeroFt = 0;
+      state.gStress = 0;
+      state.loadG = 1;
+      state.stalled = false;
+      state.overspeed = false;
+      state.structuralFail = false;
+      if (cockpit) cockpit.reset();   // full tanks on a fresh start
       state.throttle = 0;
       state.power = 0;
       state.ias = 0;
@@ -954,6 +975,7 @@
     const CUE = { green: '#4ade80', yellow: '#facc15', red: '#ef4444' };
     let cueBeepAt = 0, cueKey = '';
     function cueBeep() {
+      if (audio.muted) return;
       try {
         const ac = cueBeep.ac || (cueBeep.ac = new (window.AudioContext || window.webkitAudioContext)());
         const o = ac.createOscillator(), g = ac.createGain();
@@ -1033,6 +1055,31 @@
       track(landed ? 'level_complete' : 'game_over', Object.assign({ level: currentAircraft, seconds }, extra));
     }
 
+    // A reason to come back: stars for every landing (smooth = 3), a running total, and a daily streak. No words.
+    const starsEl = document.createElement('nav');
+    starsEl.id = 'landing-stars';
+    starsEl.style.cssText = 'position:fixed;top:26%;left:50%;transform:translateX(-50%) scale(0.6);z-index:10003;pointer-events:none;opacity:0;' +
+      'transition:opacity .25s ease, transform .35s cubic-bezier(.2,1.6,.4,1);text-align:center;font:bold 22px monospace;color:#fff;text-shadow:0 2px 8px #000;white-space:nowrap;';
+    document.body.appendChild(starsEl);
+    function awardLanding(stars) {
+      // One award per landing: a bounce on the same runway does not count twice
+      if (performance.now() - (starsEl._at || -1e9) < 30000) return;
+      starsEl._at = performance.now();
+      let save = { total: 0, streak: 0, day: '' };
+      try { save = Object.assign(save, JSON.parse(localStorage.getItem('skyforge.stars') || '{}')); } catch (e) { /* storage blocked */ }
+      const today = new Date().toDateString();
+      const yesterday = new Date(Date.now() - 864e5).toDateString();
+      if (save.day !== today) save.streak = save.day === yesterday ? save.streak + 1 : 1;
+      save.day = today;
+      save.total += stars;
+      try { localStorage.setItem('skyforge.stars', JSON.stringify(save)); } catch (e) { /* storage blocked */ }
+      starsEl.innerHTML = `<div style="font-size:54px;color:#fde047;letter-spacing:6px;">${'&#9733;'.repeat(stars)}<span style="opacity:.25">${'&#9733;'.repeat(3 - stars)}</span></div>&#9733; ${save.total} &nbsp; &#128293; ${save.streak}`;
+      starsEl.style.opacity = '1';
+      starsEl.style.transform = 'translateX(-50%) scale(1)';
+      clearTimeout(starsEl._t);
+      starsEl._t = setTimeout(() => { starsEl.style.opacity = '0'; starsEl.style.transform = 'translateX(-50%) scale(0.6)'; }, 3500);
+    }
+
     function crash(reason) {
       if (landing.crashResetAt) return;
       flightMsg(`CRASH: ${reason} - PILOT EJECTED. New start at ${activeEnd.icao} RWY ${activeEnd.ident} in 10 s`, '#ef4444', 6000);
@@ -1072,6 +1119,7 @@
       if (profile.approachKt && state.ias > profile.approachKt * 1.5) return crash(`TOUCHDOWN FAR TOO FAST (${Math.round(state.ias)} KT)`);
       if (!rwy && state.ias > 40) return crash(onHigherGround ? 'TERRAIN IMPACT' : 'OFF-RUNWAY TOUCHDOWN');
       const grade = fpm < 240 ? 'SMOOTH' : fpm < 600 ? 'NORMAL' : 'FIRM';
+      awardLanding(grade === 'SMOOTH' ? 3 : grade === 'NORMAL' ? 2 : 1);
       const arrived = destEnd && rwy.icao === destEnd.icao && rwy.icao !== landing.depIcao;
       const trip = arrived && landing.depMs ? ` - ARRIVED from ${landing.depIcao}, flight time ${Math.round((performance.now() - landing.depMs) / 60000)} min` : '';
       flightMsg(`${grade} LANDING - ${fpm} FPM, ${rwy.icao} RWY ${rwy.ident}, ${rwy.distPast} M past threshold${trip}. Brakes: B / L3`, '#4ade80', 9000);
@@ -1243,6 +1291,7 @@
     window.toggleCameraView = () => {
       if (twoPlayer && cameraMode === 'chase') { flightMsg('2 PLAYERS: shared outside view (cockpit view is one-player)', '#fbbf24', 2500); return; }
       cameraMode = cameraMode === 'chase' ? 'cockpit' : 'chase';
+      document.body.dataset.cam = cameraMode;   // the phone tab shows the matching icon
       const btn = document.getElementById('btn-cam');
       if (btn) btn.innerText = cameraMode === 'cockpit' ? 'VIEW: COCKPIT [C]' : 'VIEW: CHASE [C]';
     };
@@ -1406,6 +1455,18 @@
       return Math.max(0, (state.pos.y - terrain.groundY(state.pos.x, state.pos.z) - profile.groundHeight) * 3.28084 - (state.altZeroFt || 0));
     }
     window.skyforgeHeightFt = heightAboveGroundFt; // console check
+    window.skyforgeCockpit = () => cockpit;        // console check: fuelKg
+
+    // The pilot's own view under g: the edges darken, then everything goes black
+    const gVision = document.createElement('nav');
+    gVision.id = 'g-vision';
+    gVision.style.cssText = 'position:fixed;inset:0;z-index:9000;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 50%, transparent 15%, #000 72%);';
+    document.body.appendChild(gVision);
+    function drawGVision() {
+      const stress = crashFx.active ? 0 : Math.min(1, state.gStress || 0);
+      gVision.style.opacity = stress;
+      gVision.style.backgroundColor = stress >= 1 ? '#000' : 'transparent';
+    }
 
     // Before take-off: no power while the altitude does not read 0 (user, 03-Nov-2026). Tap the alert to set it to zero.
     const zeroAlert = document.createElement('button');
@@ -1492,8 +1553,13 @@
         state.throttle = Math.max(0.0, Math.min(1.0, state.throttle + pad.throttleRate * 0.4 * dt));
       }
       altitudeInterlock();
+      // Engine follows the throttle at its own speed; it stops when the tanks run dry
+      const engineOut = !profile.rotorcraft && cockpit.fuelKg <= 0;
+      state.engineOut = engineOut;
+      if (engineOut) state.throttle = 0;
 
-      state.power += (state.throttle * 100 - state.power) * 3.5 * dt;
+      const spool = (AIR[currentAircraft] && AIR[currentAircraft].spool) || 3.5;
+      state.power += (state.throttle * 100 - state.power) * Math.min(1, spool * dt);
       state.isAfterburner = (profile.afterburnerThrust !== undefined && state.throttle > 0.70);
 
       let pIn = (keys['KeyS'] ? 1 : 0) - (keys['KeyW'] ? 1 : 0);
@@ -1505,6 +1571,14 @@
         rIn = Math.max(-1, Math.min(1, rIn + pad.roll));
         yIn = Math.max(-1, Math.min(1, yIn + pad.yaw));
       }
+      // Touch stick on phones (analog)
+      const touchStick = window.skyforgeTouchStick;
+      if (touchStick) {
+        pIn = Math.max(-1, Math.min(1, pIn + touchStick.pitch));
+        rIn = Math.max(-1, Math.min(1, rIn + touchStick.roll));
+      }
+      // Pilot blacked out by sustained g: no control until the blood returns
+      if (state.gStress >= 1) { pIn = 0; rIn = 0; yIn = 0; }
 
       if (state.navMode && (!state.apMaster || state.onGround || profile.rotorcraft || !lastNav || lastNav.complete)) {
         state.navMode = false;
@@ -1552,6 +1626,12 @@
           gentleRoll: !!state.navMode,
           hM: heightM
         }, profile, currentAircraft, dt);
+        // Human limit: holding more g than the pilot tolerates narrows the view, then blacks it out
+        const tolerance = AIR[currentAircraft].gTolerance;
+        state.gStress = Math.max(0, Math.min(1.2, (state.gStress || 0) + (state.loadG > tolerance ? (state.loadG - tolerance) * 0.2 : -0.35) * dt));
+        // Warning horn past the never-exceed speed; well past it the airframe breaks up
+        if (state.overspeed && performance.now() > cueBeepAt) { cueBeep(); cueBeepAt = performance.now() + 450; }
+        if (state.structuralFail && !landing.crashResetAt) crash('STRUCTURE FAILED - OVERSPEED');
       } else {
         // Fixed-wing on the ground: per-aircraft numbers come from the active profile
         state.rollRate = 0;
@@ -1805,6 +1885,7 @@
       visuals.render();
       drawAvionics();
       drawCombatAndIls();
+      drawGVision();
     }
 
     // Radar lock box + ILS needles, drawn over the HUD canvas in both views

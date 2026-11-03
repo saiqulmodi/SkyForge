@@ -354,9 +354,9 @@ export function createTrainer() {
       maxRollRate: 1.4,
       maxPitchRate: 0.9,
       maxYawRate: 0.5,
-      vr: 55,
-      stallKt: 48,     // clean stall speed (lift model)
-      approachKt: 62,  // 1.3 x stall
+      vr: 80,          // 1.13 x stall
+      stallKt: 70,     // from L = 1/2 rho V^2 S CLmax with this aircraft's mass and wing (tools/validate_flight.py)
+      approachKt: 91,  // 1.3 x stall
       groundThrust: 28.0,
       groundHeight: 1.2,
       // keys AeroEngine6DOF reads

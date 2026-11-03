@@ -17,11 +17,13 @@ const RHO0 = 1.225;
 
 // thrust, afterburner: full-power jet acceleration at sea level (m/s2); powerPerKg: propeller power (W/kg);
 // wave: drag factor from Mach 0.85 to 1.25; nMax, nMin: g limits; roll, pitch, yaw: rad/s at full control;
-// rollLag: seconds for a roll to build up
+// rollLag: seconds for a roll to build up; spool: how fast the engine follows the throttle (1/s);
+// fbw: flight computer keeps the wing below the stall; bankMax: bank limit (rad); vne, mmo: never-exceed speed (kt) and Mach;
+// gTolerance: g the pilot holds without greying out (a g-suit in the fighter)
 export const AIR = {
-  fighter: { thrust: 7.5, afterburner: 14, wave: 1.85, nMax: 9, nMin: -3, roll: 3.0, pitch: 0.7, yaw: 0.2, rollLag: 0.15 },
-  trainer: { thrust: 3.2, powerPerKg: 48, wave: 1, nMax: 4.4, nMin: -1.76, roll: 1.2, pitch: 0.6, yaw: 0.25, rollLag: 0.25 },
-  airliner: { thrust: 3.0, wave: 1.3, nMax: 2.5, nMin: -1, roll: 0.4, pitch: 0.2, yaw: 0.06, rollLag: 0.6 }
+  fighter: { thrust: 7.5, afterburner: 14, wave: 1.85, nMax: 9, nMin: -3, roll: 3.0, pitch: 0.7, yaw: 0.2, rollLag: 0.15, spool: 1.2, fbw: true, vne: 800, mmo: 2.0, gTolerance: 6.5 },
+  trainer: { thrust: 3.2, powerPerKg: 48, wave: 1, nMax: 6, nMin: -3, roll: 1.2, pitch: 0.6, yaw: 0.25, rollLag: 0.25, spool: 2.0, vne: 230, mmo: 0.6, gTolerance: 4.5 },
+  airliner: { thrust: 3.0, wave: 1.3, nMax: 2.5, nMin: -1, roll: 0.4, pitch: 0.2, yaw: 0.06, rollLag: 0.6, spool: 0.25, bankMax: 45 * Math.PI / 180, vne: 340, mmo: 0.82, gTolerance: 4.5 }
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -37,7 +39,9 @@ export function atmosphere(hM) {
 
 function liftCoefficient(alpha, p) {
   const clMax = clMaxOf(p);
-  if (Math.abs(alpha) > p.stallAoA) return Math.sign(alpha) * clMax * 0.55; // stalled
+  const beyond = Math.abs(alpha) - p.stallAoA;
+  // Past the stall angle the airflow separates: lift falls away over the next 8 degrees, down to 55 %
+  if (beyond > 0) return Math.sign(alpha) * clMax * (1 - 0.45 * Math.min(1, beyond / 0.14));
   return clamp(p.cl0 + p.clAlpha * alpha, -clMax, clMax);
 }
 
@@ -138,9 +142,9 @@ export function stepFixedWingAir(state, input, p, type, dt) {
   }
   nCmd = clamp(nCmd, air.nMin, air.nMax);
 
-  // Full stick stops just short of the stall angle (keyboard and touch stick are all-or-nothing). Below stall speed the
-  // wing still cannot carry the weight, so the aircraft sinks and the nose follows the path down.
-  const alphaCmd = clamp((clMax * nCmd / qRatio - p.cl0) / p.clAlpha, -p.stallAoA * 0.98, p.stallAoA * 0.98);
+  // The fighter's flight computer stops short of the stall. In the others, holding full back stick takes the wing past it.
+  const alphaTop = p.stallAoA * (!air.fbw && (state.stick || 0) > 0.9 ? 1.15 : 0.98);
+  const alphaCmd = clamp((clMax * nCmd / qRatio - p.cl0) / p.clAlpha, -p.stallAoA * 0.98, alphaTop);
 
   // Forces per unit mass: lift across the velocity in the wings' plane, drag against it, thrust along the nose, weight down
   const cl = liftCoefficient(alpha, p);
@@ -160,13 +164,26 @@ export function stepFixedWingAir(state, input, p, type, dt) {
   pathRate.crossVectors(vHat, accel).divideScalar(v);
   const pathPitch = pathRate.dot(right), pathYaw = pathRate.dot(up), pathRoll = -pathRate.dot(nose);
 
-  const pitchRate = clamp(pathPitch + 4 * ctrl * (alphaCmd - alpha), -air.pitch, air.pitch);
+  // Stalled: the nose drops and a wing falls until the pilot lowers the angle of attack and adds power
+  if (stalled && !state.stalled) state.wingDrop = (Math.random() < 0.5 ? -1 : 1) * 0.3;
+  state.stalled = stalled;
+  const pitchRate = clamp(pathPitch + 4 * ctrl * (alphaCmd - alpha) - (stalled ? 0.35 * Math.sign(alpha) : 0), -air.pitch, air.pitch);
   const yawRate = pathYaw + input.yaw * air.yaw * ctrl - 2 * beta;
 
   // Roll builds up over a moment; the autopilot is gentle; sideslip rolls the aircraft (rudder banks it)
-  let rollWanted = -input.roll * air.roll * ctrl + 1.5 * beta;
+  let rollWanted = -input.roll * air.roll * ctrl + 1.5 * beta + (stalled ? state.wingDrop : 0);
   if (input.wingsLevel) rollWanted += clamp(-state.rot.z * 0.5, -0.35, 0.35);
   if (input.gentleRoll) rollWanted = clamp(rollWanted, -0.35, 0.35);
+  if (air.bankMax) {   // a heavy aircraft is held inside its bank limit
+    if (state.rot.z > air.bankMax) rollWanted = Math.min(rollWanted, -(state.rot.z - air.bankMax));
+    else if (state.rot.z < -air.bankMax) rollWanted = Math.max(rollWanted, -air.bankMax - state.rot.z);
+  }
+
+  // Limits the game reacts to: g on the airframe and the pilot, never-exceed speed (past 20 % over it the structure fails)
+  state.loadG = lift / G;
+  const ias = v * Math.sqrt(atm.sigma) * 1.94384, mach = v / atm.soundMs;
+  state.overspeed = ias > air.vne || mach > air.mmo;
+  if (ias > air.vne * 1.2 || mach > air.mmo * 1.2) state.structuralFail = true;
   state.rollRate = (state.rollRate || 0) + (rollWanted - (state.rollRate || 0)) * Math.min(1, dt / air.rollLag);
 
   state.vel.addScaledVector(accel, dt);
