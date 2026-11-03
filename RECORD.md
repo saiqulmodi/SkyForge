@@ -39,6 +39,11 @@ Kept up to date with each round of work. Newest round first in "Done".
 - Altitude reads 0 on the ground; no power until it reads 0.
 - Flight runs in real time at any frame rate.
 
+## Waiting on the Stratos team
+
+- Front-page hover clip: new clip made 04-Nov (`stratos-preview.mp4`, 480 x 300, 6 s, same format as the others). Sahariar or Sahil needs to put it in as `assets/previews/saiqulmodi-skyforge.mp4`, because makers cannot change that shared folder.
+- Stratos team's reports on the fighter version.
+
 ## Can still be better
 
 Most useful first. "Needs the user" means it cannot be finished from this computer alone.
