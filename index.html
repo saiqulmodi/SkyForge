@@ -555,6 +555,7 @@
     import * as THREE from 'three';
     import { FleetManager } from './src/aircraft/FleetManager.js';
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
+    import { stepFixedWingAir, groundRollAccel, trimThrottle, trimAlpha, atmosphere } from './src/physics/flight.js';
     import { GamepadInput } from './src/core/gamepad.js';
     import { initTouchControls, isTouchPlay } from './src/core/touchControls.js';
     import { initPhase6Environment } from './src/environment/phase6/index.js';
@@ -874,7 +875,6 @@
 
     window.selectAircraft = (type) => {
       if (type === currentAircraft) return;
-      const airborne = aircraft !== null && !state.onGround;
       aircraft = fleet.switchTo(type);
       cockpit = fleet.cockpit;
       visuals.enhanceAircraft(aircraft.mesh, cockpit.group);
@@ -882,12 +882,8 @@
       currentAircraft = type;
       navComputer.setCruise(CRUISE_FT[type] || 9500);
 
-      if (airborne) {
-        // Keep position, heading and speed; just keep the new airframe's gear clear of the ground
-        state.pos.y = Math.max(state.pos.y, profile.groundHeight + 1);
-      } else {
-        resetToThreshold();
-      }
+      // A different aircraft is always a fresh start on the runway, never a jump in mid-air (user, 03-Nov-2026)
+      resetToThreshold();
       updateAPReadout();
     };
 
@@ -1093,6 +1089,8 @@
       state.onGround = false;
       state.apMaster = false;
       state.altHold = false;
+      state.holdGamma = -GLIDE_RAD;
+      state.rollRate = 0;
       landing.airTime = 10;
       landing.crashResetAt = 0;
       if (profile.rotorcraft) {
@@ -1101,12 +1099,9 @@
         state.power = 66;
       } else {
         // Trim for the 3 degree path: lift = weight at this speed, thrust = drag minus the glide's help
-        const clMax = profile.cl0 + profile.clAlpha * profile.stallAoA;
-        const cl = clMax * (profile.stallKt / profile.approachKt) ** 2;
-        const alpha = (cl - profile.cl0) / profile.clAlpha;
-        state.rot.set(alpha - GLIDE_RAD, yawFor(e.dirX, e.dirZ), 0);
-        const drag = 0.0006 * v * v + 9.81 * cl * 0.05;
-        state.throttle = Math.max(0, Math.min(1, (drag - 9.81 * Math.sin(GLIDE_RAD)) / profile.maxThrust));
+        const hM = amslFt(state.pos.y) * 0.3048;
+        state.rot.set(trimAlpha(profile, v, hM) - GLIDE_RAD, yawFor(e.dirX, e.dirZ), 0);
+        state.throttle = trimThrottle(currentAircraft, profile, v, -GLIDE_RAD, hM);
         state.power = state.throttle * 100;
       }
       updateAPReadout();
@@ -1435,26 +1430,14 @@
       ctx.fillStyle = '#f8fafc';
       ctx.font = '11px monospace';
       ctx.fillText(`PITCH: ${(state.rot.x * 180 / Math.PI).toFixed(1)}°`, cx - 80, cy + 68);
-
-      if (currentAircraft === 'fighter') {
-        const mx = hudCanvas.width / 2;
-        const my = hudCanvas.height / 2;
-        ctx.strokeStyle = state.mach >= 1.0 ? '#ef4444' : '#10b981';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(mx, my, 18, 0, Math.PI * 2);
-        ctx.moveTo(mx - 30, my); ctx.lineTo(mx - 18, my);
-        ctx.moveTo(mx + 18, my); ctx.lineTo(mx + 30, my);
-        ctx.moveTo(mx, my - 30); ctx.lineTo(mx, my - 18);
-        ctx.moveTo(mx, my + 18); ctx.lineTo(mx, my + 30);
-        ctx.stroke();
-      }
     }
 
     // ==========================================
     // 7. SUPERSONIC AERODYNAMICS LOOP
     // ==========================================
-    const dt = 1 / 60;
+    // Real time per frame: flight runs at true speed on a slow phone or a 120 Hz screen alike
+    let dt = 1 / 60;
+    let lastFrameMs = 0;
 
     // Cockpit camera / HUD helpers
     let gLoad = 1.0;
@@ -1472,6 +1455,9 @@
 
     function animate() {
       requestAnimationFrame(animate);
+      const frameNow = performance.now();
+      dt = lastFrameMs ? Math.max(1 / 240, Math.min(1 / 20, (frameNow - lastFrameMs) / 1000)) : 1 / 60;
+      lastFrameMs = frameNow;
       velBefore.copy(state.vel);
 
       if (keys['ShiftLeft'] || keys['ShiftRight']) state.throttle = Math.min(1.0, state.throttle + 0.4 * dt);
@@ -1518,8 +1504,11 @@
       // Nose direction in the horizontal plane (heading); airspeed = velocity along it
       fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
       const forwardSpeed = Math.max(0, state.vel.x * fwdDir.x + state.vel.z * fwdDir.z);
-      state.ias = forwardSpeed * 1.94384;
-      state.mach = state.ias / 661.47;
+      const heightM = amslFt(state.pos.y) * 0.3048;
+      const air = atmosphere(heightM);
+      const trueSpeed = state.onGround ? forwardSpeed : state.vel.length(); // in the air: true 3D speed
+      state.ias = trueSpeed * Math.sqrt(air.sigma) * 1.94384;               // what the airspeed indicator reads
+      state.mach = trueSpeed / air.soundMs;
 
       const braking = !!(keys['KeyB'] || (pad && pad.brake));
       const terrainY = terrain.groundY(state.pos.x, state.pos.z); // real ground under the aircraft (0 at VOBL)
@@ -1528,8 +1517,22 @@
         // Rotorcraft branch (aero.js): collective = lift, cyclic = disc tilt, pedals = yaw
         state.prevOnGround = state.onGround;
         stepRotorcraft(state, { pitch: pIn, roll: rIn, yaw: yIn }, profile, dt, terrainY);
+      } else if (state.pos.y > terrainY + profile.groundHeight) {
+        // Fixed-wing in the air: real rolling, pitching, banked turns and speed (src/physics/flight.js)
+        state.prevOnGround = state.onGround;
+        state.onGround = false;
+        stepFixedWingAir(state, {
+          pitch: pIn, roll: rIn, yaw: yIn,
+          autoAltFt: state.apMaster && state.altHold ? state.targetAlt - amslFt(state.pos.y) : null,
+          wingsLevel: state.apMaster && !state.navMode,
+          gentleRoll: !!state.navMode,
+          hM: heightM
+        }, profile, currentAircraft, dt);
       } else {
-        // Fixed-wing: per-aircraft numbers come from the active profile
+        // Fixed-wing on the ground: per-aircraft numbers come from the active profile
+        state.rollRate = 0;
+        state.holdGamma = null;
+        state.stick = 0;
         const vr = profile.vr;
         const pitchRate = profile.maxPitchRate;
         const rollRate = profile.maxRollRate;
@@ -1587,11 +1590,11 @@
             state.vel.z *= k;
           }
           if (state.throttle >= 0.05) {
-            let groundThrust = (state.power / 100) * profile.groundThrust;
-            state.vel.x += fwdDir.x * groundThrust * dt;
-            state.vel.z += fwdDir.z * groundThrust * dt;
-            state.vel.x *= 0.998;
-            state.vel.z *= 0.998;
+            // Engine against air drag and rolling resistance, each aircraft's own (src/physics/flight.js)
+            const rollAccel = groundRollAccel(state, currentAircraft, profile, forwardSpeed, heightM);
+            const nextSpeed = Math.max(0, forwardSpeed + rollAccel * dt);
+            state.vel.x = fwdDir.x * nextSpeed;
+            state.vel.z = fwdDir.z * nextSpeed;
           }
 
           // Landing rollout: nose wheel comes down and the aircraft stays down unless the pilot
@@ -1621,25 +1624,6 @@
             if (state.ias > 40) audio.playTouchdown();
             onTouchdown(-velBefore.y);
           }
-        } else {
-          state.onGround = false;
-
-          // Lift acts through the wings: its vertical share shrinks with bank
-          state.vel.y += (liftAccel * Math.cos(state.rot.z) - 9.81) * dt;
-          state.vel.y = Math.max(-35, Math.min(40, state.vel.y));
-
-          const maxThrust = state.isAfterburner ? profile.afterburnerThrust : profile.maxThrust;
-
-          let waveDragCoeff = 0.0006;
-          if (state.mach > 0.85 && state.mach < 1.25) {
-            waveDragCoeff = 0.0014;
-          }
-
-          // Along the flight path: thrust - parasite/wave drag - induced drag - climb (g sin gamma)
-          const aeroDrag = waveDragCoeff * forwardSpeed * forwardSpeed;
-          const alongAccel = (state.power / 100) * maxThrust - aeroDrag - inducedDrag - 9.81 * Math.sin(gamma);
-          state.vel.x += fwdDir.x * alongAccel * dt;
-          state.vel.z += fwdDir.z * alongAccel * dt;
         }
       }
 
