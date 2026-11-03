@@ -17,6 +17,7 @@ Kept up to date with each round of work. Newest round first in "Done".
 - Gear folds away after take-off and comes down below 300 ft.
 - Vapor cone near Mach 1, white wing-tip trails above 4 g, sonic boom sound.
 - Smooth transitions: nose and wings settle at touchdown instead of snapping; slow steady rotation for take-off; wave drag rises smoothly; chase camera follows loops and rolls at a limited rate with no flip at the top.
+- On the ground it moves like any aircraft: small power taxis, power off coasts, nose-wheel steering is tight at taxi speed and gentle at speed, brakes stop it. Nothing moves at a standstill, and the nose lifts only near take-off speed.
 - Leftover banner behind the tabs removed.
 - Crash in the air (user's report: wreck on the ground, altitude 7,734 ft): a crash now always reads 0 ft and 0 kt. The fighter's flight computer holds it inside its speed limit under power; only a steep dive can still overspeed it.
 - Tested on the fighter: take-off roll 12 s on dry power, supersonic on afterburner and subsonic on dry, full loop, 360 roll in 2.4 s, split-S, dive into the ground, restart at 0 ft.

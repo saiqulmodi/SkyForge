@@ -1681,8 +1681,11 @@
         // Attitude holds like a real aircraft when the stick is let go (user, 01-Nov-2026); only the
         // autopilot (AP / ALT HOLD / NAV) brings the wings and nose back to level
         const levelK = state.apMaster ? 1 : 0;
-        state.rot.x += (pIn * pitchRate * cEff - state.rot.x * 0.08 * levelK) * dt;
-        state.rot.z += (-rIn * rollRate * cEff - state.rot.z * 0.3 * levelK) * dt;
+        // On the wheels the controls need airflow: nothing moves at a standstill, the nose can only be raised near
+        // take-off speed and settles back on its wheel otherwise, and the wings stay level on the gear
+        const groundAuthority = Math.min(1, (forwardSpeed / (vr / 1.94384)) ** 2);
+        state.rot.x += (pIn * pitchRate * groundAuthority - state.rot.x * 0.08 * levelK) * dt;
+        if (pIn <= 0) state.rot.x -= state.rot.x * (1 - groundAuthority) * 1.5 * dt;
 
         state.prevOnGround = state.onGround;
         const groundHeight = terrainY + profile.groundHeight;
@@ -1703,7 +1706,10 @@
         // (turn rate = L sin(bank) / v), so pulling back in a bank tightens the turn. Turn lift capped at -3..6 g.
         const turnLift = Math.max(-3 * 9.81, Math.min(6 * 9.81, liftAccel));
         const turnRate = wheelsDown ? 0 : turnLift * Math.sin(-state.rot.z) / Math.max(25, forwardSpeed);
-        state.rot.y += (yIn * profile.maxYawRate * cEff - turnRate) * dt;
+        // Nose-wheel steering, as on any aircraft: a tight turn (18 m radius) at taxi speed, gentle at speed so the
+        // tyres hold (0.25 g sideways at most); the rudder keeps a little authority on the take-off roll
+        const steering = forwardSpeed < 0.1 ? 0 : Math.max(Math.min(forwardSpeed / 18, 2.45 / forwardSpeed), forwardSpeed > 30 ? 0.05 : 0);
+        state.rot.y += (yIn * steering - turnRate) * dt;
 
         // Velocity follows the nose: sideways slip dies out (quickly on the tyres, slower in the air)
         fwdDir.set(-Math.sin(state.rot.y), 0, -Math.cos(state.rot.y));
@@ -1724,7 +1730,8 @@
           state.rot.z *= Math.exp(-8 * dt);
 
           // Ground roll: rolling resistance at idle, wheel brakes (B / L3) for the landing rollout
-          const groundDecel = (state.throttle < 0.05 ? 1.2 : 0) + (braking ? 5.0 * phase7.brakeFactor(state.ias) : 0);
+          // With the power off it coasts down on tyre drag; on the landing roll the ground spoilers add more
+          const groundDecel = (state.throttle < 0.05 ? (landing.rollout ? 1.2 : 0.3) : 0) + (braking ? 5.0 * phase7.brakeFactor(state.ias) : 0);
           const rollSpeed = Math.hypot(state.vel.x, state.vel.z);
           if (groundDecel > 0 && rollSpeed > 0) {
             const k = Math.max(0, rollSpeed - groundDecel * dt) / rollSpeed;
@@ -1733,8 +1740,9 @@
           }
           if (state.throttle >= 0.05) {
             // Engine against air drag and rolling resistance, each aircraft's own (src/physics/flight.js)
-            const rollAccel = groundRollAccel(state, currentAircraft, profile, forwardSpeed, heightM);
-            const nextSpeed = Math.max(0, forwardSpeed + rollAccel * dt);
+            const rollingNow = Math.max(0, state.vel.x * fwdDir.x + state.vel.z * fwdDir.z);   // after the brakes above
+            const rollAccel = groundRollAccel(state, currentAircraft, profile, rollingNow, heightM);
+            const nextSpeed = Math.max(0, rollingNow + rollAccel * dt);
             state.vel.x = fwdDir.x * nextSpeed;
             state.vel.z = fwdDir.z * nextSpeed;
           }
