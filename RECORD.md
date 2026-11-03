@@ -18,6 +18,7 @@ Kept up to date with each round of work. Newest round first in "Done".
 - Vapor cone near Mach 1, white wing-tip trails above 4 g, sonic boom sound.
 - Smooth transitions: nose and wings settle at touchdown instead of snapping; slow steady rotation for take-off; wave drag rises smoothly; chase camera follows loops and rolls at a limited rate with no flip at the top.
 - Leftover banner behind the tabs removed.
+- Crash in the air (user's report: wreck on the ground, altitude 7,734 ft): a crash now always reads 0 ft and 0 kt. The fighter's flight computer holds it inside its speed limit under power; only a steep dive can still overspeed it.
 - Tested on the fighter: take-off roll 12 s on dry power, supersonic on afterburner and subsonic on dry, full loop, 360 roll in 2.4 s, split-S, dive into the ground, restart at 0 ft.
 
 ### Round 2, 04-Nov-2026: flight rules from the user's documents

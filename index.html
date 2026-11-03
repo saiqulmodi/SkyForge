@@ -1112,6 +1112,13 @@
       aircraft.mesh.traverse((o) => { if (paint === 0x8896a8 && o.isMesh && o.material && o.material.color) paint = o.material.color.getHex(); });
       crashFx.start(state.pos, velBefore, terrain.groundY(state.pos.x, state.pos.z), paint);
       aircraft.mesh.visible = false;
+      // The wreck is on the ground, so the aircraft's numbers are too, wherever the crash began (0 ft, 0 kt, level)
+      state.pos.y = terrain.groundY(state.pos.x, state.pos.z) + profile.groundHeight;
+      state.altZeroFt = 0;
+      state.rot.x = 0;
+      state.rot.z = 0;
+      state.onGround = true;
+      state.prevOnGround = true;
       state.vel.set(0, 0, 0);
       state.throttle = 0;
       state.power = 0;

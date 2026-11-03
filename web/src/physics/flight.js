@@ -166,7 +166,11 @@ export function stepFixedWingAir(state, input, p, type, dt) {
   if (liftDir.lengthSq() > 1e-6) liftDir.normalize(); else liftDir.copy(up);
   const drag = parasiteDrag(v, p, air, atm, stalled) + Math.abs(lift) * dragShare(cl, p);
   const side = clamp(-beta * v * v * 0.002, -2 * G, 2 * G);
-  accel.copy(nose).multiplyScalar(thrustAccel(state.power / 100, state.isAfterburner, v, air, atm))
+  // The fighter's flight computer eases the engines back as it nears its speed limit, so power alone cannot overspeed it.
+  // A steep dive still can.
+  const iasNow = v * Math.sqrt(atm.sigma) * 1.94384;
+  const speedGuard = air.fbw ? clamp((air.vne - iasNow) / 50, 0, 1) * clamp((air.mmo - v / atm.soundMs) / 0.1, 0, 1) : 1;
+  accel.copy(nose).multiplyScalar(thrustAccel(state.power / 100, state.isAfterburner, v, air, atm) * speedGuard)
     .addScaledVector(liftDir, lift)
     .addScaledVector(vHat, -drag)
     .addScaledVector(right, side);
