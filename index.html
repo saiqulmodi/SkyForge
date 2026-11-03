@@ -549,6 +549,7 @@
     import { FleetManager } from './src/aircraft/FleetManager.js';
     import { getFlightProfile, stepRotorcraft } from './src/physics/aero.js';
     import { GamepadInput } from './src/core/gamepad.js';
+    import { initTouchControls, isTouchPlay } from './src/core/touchControls.js';
     import { initPhase6Environment } from './src/environment/phase6/index.js';
     import { initPhase7Weather } from './src/environment/phase7/index.js';
     import { initPhase8Navigation } from './src/environment/phase8/index.js';
@@ -1391,11 +1392,14 @@
     window.addEventListener('resize', resize);
     resize();
 
+    initTouchControls(movingMap.canvas); // phones and tablets only: on-screen flight buttons
+
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
       if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
       const cx = 120;
-      const cy = hudCanvas.height - 120;
+      // On a phone the corner holds the touch buttons, so this panel sits higher, under the emblem / map
+      const cy = isTouchPlay() ? (hudCanvas.width > hudCanvas.height ? 165 : 370) : hudCanvas.height - 120;
 
       ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
       ctx.fillRect(cx - 95, cy - 85, 190, 170);
