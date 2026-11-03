@@ -900,6 +900,7 @@
       terrain.prime(state.pos.x, state.pos.z);
       state.rot.set(0, yawFor(e.dirX, e.dirZ), 0);
       state.vel.set(0, 0, 0);
+      state.altZeroFt = 0;
       state.throttle = 0;
       state.power = 0;
       state.ias = 0;
@@ -1402,9 +1403,24 @@
     // Altitude shown to the pilot: height above the ground under the aircraft, 0 on the ground (user, 03-Nov-2026).
     // Navigation and the autopilot keep working in height above sea level.
     function heightAboveGroundFt() {
-      return Math.max(0, (state.pos.y - terrain.groundY(state.pos.x, state.pos.z) - profile.groundHeight) * 3.28084);
+      return Math.max(0, (state.pos.y - terrain.groundY(state.pos.x, state.pos.z) - profile.groundHeight) * 3.28084 - (state.altZeroFt || 0));
     }
     window.skyforgeHeightFt = heightAboveGroundFt; // console check
+
+    // Before take-off: no power while the altitude does not read 0 (user, 03-Nov-2026). Tap the alert to set it to zero.
+    const zeroAlert = document.createElement('button');
+    zeroAlert.id = 'zero-alert';
+    zeroAlert.type = 'button';
+    zeroAlert.innerHTML = '&#9888; SET ALTITUDE 0';
+    zeroAlert.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:10006;display:none;height:auto !important;' +
+      'padding:10px 18px !important;font:bold 16px monospace !important;color:#fff;background:#dc2626 !important;border:2px solid #fff;border-radius:8px !important;cursor:pointer;';
+    zeroAlert.onclick = () => { state.altZeroFt = (state.altZeroFt || 0) + heightAboveGroundFt(); };
+    document.body.appendChild(zeroAlert);
+    function altitudeInterlock() {
+      const blocked = state.onGround && state.ias < 5 && !crashFx.active && heightAboveGroundFt() > 3;
+      if (blocked) { state.throttle = 0; state.power = 0; }
+      zeroAlert.style.setProperty('display', blocked ? 'block' : 'none');
+    }
 
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
@@ -1475,6 +1491,7 @@
         handlePadActions(pad);
         state.throttle = Math.max(0.0, Math.min(1.0, state.throttle + pad.throttleRate * 0.4 * dt));
       }
+      altitudeInterlock();
 
       state.power += (state.throttle * 100 - state.power) * 3.5 * dt;
       state.isAfterburner = (profile.afterburnerThrust !== undefined && state.throttle > 0.70);
