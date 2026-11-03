@@ -374,6 +374,8 @@
   html body #control-deck > .panel-box:nth-child(n+3) { display: none !important; }
   html body #control-deck { justify-content: safe center !important; backdrop-filter: none !important; }
   .deck-arrow { display: none !important; }
+  /* 03-Nov-2026 (user): no write-up in the centre of the screen on any version (warning sounds stay) */
+  #flight-msg, #track-cue { display: none !important; }
 </style>
 <script>
   // ◀ ▶ beside the control deck: slide one screen of panels; each arrow dims at its end; same height as the deck
@@ -1446,10 +1448,6 @@
         ctx.moveTo(mx, my - 30); ctx.lineTo(mx, my - 18);
         ctx.moveTo(mx, my + 18); ctx.lineTo(mx, my + 30);
         ctx.stroke();
-
-        ctx.fillStyle = '#10b981';
-        ctx.font = '12px monospace';
-        ctx.fillText(`MACH ${state.mach.toFixed(2)} | 9.0G FBW`, mx - 60, my + 50);
       }
     }
 

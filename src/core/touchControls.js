@@ -20,7 +20,7 @@ const ICONS = {
 
 const CSS = `
   /* Phones show only the view, the two tabs, the map and the flight buttons (user, 03-Nov-2026) */
-  #sf-badge, #audio-banner, #hud-canvas, #flight-msg, #track-cue, #pad-note, #wingman-hud { display: none !important; }
+  #sf-badge, #audio-banner, #hud-canvas, #pad-note, #wingman-hud { display: none !important; }
   html body #control-deck { left: 8px !important; right: 8px !important; }
   .deck-pop-btn .t { display: none; }
   nav.tc { position: fixed; z-index: 10004; bottom: 54px; touch-action: none; user-select: none; -webkit-user-select: none;
