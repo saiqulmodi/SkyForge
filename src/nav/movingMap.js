@@ -241,7 +241,8 @@ export class MovingMap {
         if (!large && !active) return;
         ctx.font = active ? 'bold 11px monospace' : '10px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(large ? `${wp.name} ${wp.altFt}ft` : wp.name, px, i % 2 ? py + 17 : py - 9);
+        const aboveGround = Math.max(0, Math.round(wp.altFt - ((this.extras && this.extras.groundFt) || 0)));
+        ctx.fillText(large ? `${wp.name} ${aboveGround}ft` : wp.name, px, i % 2 ? py + 17 : py - 9);
         ctx.textAlign = 'left';
       });
     }
@@ -353,7 +354,9 @@ export class MovingMap {
       ctx.fillText(`NEXT ${nav.name}  BRG ${String(Math.round(nav.bearing)).padStart(3, '0')}  ${nav.distNm.toFixed(1)} NM  ${mins}:${String(secs).padStart(2, '0')}`, 8, H - 36);
       const turnTxt = Math.abs(nav.turn) < 5 ? 'ON COURSE' : `TURN ${nav.turn > 0 ? 'RIGHT' : 'LEFT'} ${Math.round(Math.abs(nav.turn))} DEG`;
       const altDiff = nav.targetAltFt - nav.altFt;
-      const altTxt = Math.abs(altDiff) < 200 ? `ALT ${Math.round(nav.altFt)} OK` : `${altDiff > 0 ? 'CLIMB' : 'DESCEND'} TO ${nav.targetAltFt} FT`;
+      // Same altitude as the pilot's readout: above the ground under the aircraft
+      const groundFt = (ex && ex.groundFt) || 0;
+      const altTxt = Math.abs(altDiff) < 200 ? `ALT ${Math.max(0, Math.round(nav.altFt - groundFt))} OK` : `${altDiff > 0 ? 'CLIMB' : 'DESCEND'} TO ${Math.max(0, Math.round(nav.targetAltFt - groundFt))} FT`;
       const col = (v, y, r) => (v < y ? '#4ade80' : v < r ? '#facc15' : '#ef4444');
       const hCol = col(Math.abs(nav.turn), 5, 25), aCol = col(Math.abs(altDiff), 300, 1000);
       ctx.fillStyle = hCol;

@@ -1399,6 +1399,13 @@
     initTouchControls(movingMap); // phones and tablets only: on-screen flight buttons, clean screen
     const touchPlay = isTouchPlay();
 
+    // Altitude shown to the pilot: height above the ground under the aircraft, 0 on the ground (user, 03-Nov-2026).
+    // Navigation and the autopilot keep working in height above sea level.
+    function heightAboveGroundFt() {
+      return Math.max(0, (state.pos.y - terrain.groundY(state.pos.x, state.pos.z) - profile.groundHeight) * 3.28084);
+    }
+    window.skyforgeHeightFt = heightAboveGroundFt; // console check
+
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
       if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
@@ -1417,7 +1424,7 @@
 
       ctx.fillStyle = '#38bdf8';
       ctx.textAlign = 'right';
-      ctx.fillText(`${Math.max(0, Math.round(amslFt(state.pos.y)))} FT`, cx + 80, cy - 55);
+      ctx.fillText(`${Math.round(heightAboveGroundFt())} FT`, cx + 80, cy - 55);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = state.isAfterburner ? '#f59e0b' : '#f8fafc';
@@ -1673,7 +1680,7 @@
         else groundLine = `T/O RWY ${activeEnd.ident} ${activeEnd.icao}: ${(Math.hypot(activeEnd.thrX - state.pos.x, activeEnd.thrZ - state.pos.z) / 1000).toFixed(1)} KM (${Math.round(activeEnd.lengthM).toLocaleString('en-IN')} M LONG)`;
       }
       movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null,
-        active: activeEnd, ground: groundLine };
+        active: activeEnd, ground: groundLine, groundFt: amslFt(terrain.groundY(state.pos.x, state.pos.z)) };
       movingMap.draw(state, navData, headingNow, performance.now());
       updateTrackCue(navData, headingNow, terrain.groundY(state.pos.x, state.pos.z));
 
@@ -1711,7 +1718,7 @@
       cockpit.update({
         dt,
         iasKt: state.ias,
-        altFt: amslFt(state.pos.y),
+        altFt: heightAboveGroundFt(),
         mach: state.mach,
         gLoad,
         pitch: state.rot.x,
