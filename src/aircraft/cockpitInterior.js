@@ -1,5 +1,6 @@
 ﻿import * as THREE from 'three';
 import { CockpitMfdSet } from './cockpit_instruments.js';
+import { drawFighterHud, combinerLayout } from '../hud/fighterHud.js';
 
 export class FighterCockpitInterior {
   constructor(scene, camera) {
@@ -399,6 +400,7 @@ class CombinerHud {
   draw(d, nowMs) {
     if (nowMs - this.lastDrawMs < 1000 / HUD_HZ) return;
     this.lastDrawMs = nowMs;
+    if (d.fighterHud) { this.drawFighter(d); return; }
     const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
     const [bx, by] = this.toPx(0, 0);
     const k = this.pxPerRad;
@@ -489,6 +491,26 @@ class CombinerHud {
       ctx.textAlign = 'center';
       ctx.fillText(`${d.nav.name} ${d.nav.distNm.toFixed(1)}NM ${d.nav.targetAltFt}FT`, W / 2, H - 32);
     }
+  }
+
+  // Fighter (09-Nov-2026): the full fighter HUD (src/hud/fighterHud.js). World directions go into the body frame and
+  // through the eye onto the glass; the texture is sent to the GPU again after every redraw.
+  drawFighter(d) {
+    const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height;
+    if (!this.fighterLayout) {
+      this.fighterLayout = combinerLayout(W, H, HUD_GREEN);
+      this._qi = new THREE.Quaternion();
+      this._v = new THREE.Vector3();
+    }
+    const qi = this._qi.copy(d.q).invert(), v = this._v;
+    const proj = (dir) => {
+      v.copy(dir).applyQuaternion(qi);
+      if (v.z > -0.05) return null;
+      return this.toPx(Math.atan2(v.x, -v.z), Math.atan2(v.y, -v.z));
+    };
+    ctx.clearRect(0, 0, W, H);
+    drawFighterHud(ctx, this.fighterLayout, d, proj);
+    this.texture.needsUpdate = true;
   }
 
   drawTape(value, pxPerUnit, tickStep, labelStep, side, cy) {

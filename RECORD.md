@@ -11,6 +11,16 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 ## Done
 
+### Round 4, 09-Nov-2026: fighter upgrade, phase 1 (flight model, g effects, HUD)
+- Weight: the fighter gets lighter as fuel burns (full tanks = the old weight, so take-off is unchanged). A light fighter pulls more g and accelerates faster.
+- Roll rate up to 240 deg/s at full stick (was 172).
+- [O] switches the angle-of-attack limiter off and on. Off: full back stick takes the wing past the stall, a wing drops, and a held stall turns into a spin. Stick forward + opposite rudder recovers. HUD shows LIM OFF. Every new start puts it back on.
+- G on the HUD is the real g the pilot feels (all forces except weight, along the seat), with MAX G for the flight.
+- Pilot g over time (src/physics/pilotG.js): colour drains from about 6.5 g, tunnel vision near 8 g, blackout near 9 g after about 7 s, then G-LOC (6 s unconscious, controls dead) and 3 s coming round. Red-out below -2.5 g. Straining-breath sound above 5.5 g.
+- New fighter HUD (src/hud/fighterHud.js), the same on the cockpit glass and full screen in the chase view: horizon, 5-degree pitch ladder (solid above, dashed below, ends bent towards the horizon, numbers both ends), zenith/nadir marks, gun cross, flight path marker, heading tape, speed tape with Mach and angle of attack, altitude tape (height above ground, R below 5,000 ft) with climb rate, G + MAX, power/AB, bank scale with pointer and angle, route/runway steering diamond, flashing STALL / OVSPD / FUEL. Dimmer at dusk. Phones get a smaller HUD (ladder every 10 deg, speed, altitude, G, Mach).
+- Bug fixed: the cockpit HUD picture was never refreshed after its first frame (fighter).
+- Tests: `node tools/test_flight_model.mjs`, 18 checks against the formulas (turn rate and radius within 10 %, 9 g limit, roll rate, stall/spin/recovery, weight, Mach 1.2+, pilot g timings), all pass. `tools/validate_flight.py` still OK.
+
 ### Round 3, 04-Nov-2026: fighter to the limit
 - New fighter model: grey paint, lofted body, intakes, tailplanes, real nozzles with a glow that follows power.
 - Afterburner flame grows and dies smoothly. Thrust climbs on through the 70 % gate with no jump.
@@ -48,6 +58,7 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 Most useful first. "Needs the user" means it cannot be finished from this computer alone.
 
+0. **Feel of the g effects and the full-screen HUD at real frame rate (needs the user).** The test browser runs at about 1.5 FPS, so the g build-up was checked by the test clock, not by eye.
 1. **Real phone test (needs the user).** All tests ran at phone sizes on a computer. Frame rate and feel on a real phone are unmeasured.
 2. **Easier landing on a phone.** A flare with a touch stick may be hard. Options: a landing aid that eases the sink rate near the runway, or a gentler stick near centre.
 3. **Goals to fly for.** Only landing stars so far. Could add a daily route, target runs on the weapons range, and fastest-lap rings.
@@ -56,7 +67,7 @@ Most useful first. "Needs the user" means it cannot be finished from this comput
 6. **Sound.** Engine, boom and warnings are synthesised. Recorded sounds would be richer but add download size.
 7. **Damage model.** The aircraft is either fine or destroyed. Partial damage and engine temperature limits are not modelled.
 8. **Cross-check the flight data.** Compare against JSBSim's aircraft or published figures. The numbers are representative, not certified.
-9. **Full version only:** helicopter and Player 2 still use older flight code.
+9. **Full version only:** helicopter and Player 2 still use older flight code. The trainer's and airliner's cockpit HUD has the same never-refreshed picture bug that the fighter's had (one-line fix, not done: outside the fighter-only work).
 10. **Online multiplayer (needs the user).** Needs an account and an online service, plus the decision to run one.
 
 ## Not possible in this game

@@ -577,6 +577,8 @@
     import { createVisuals, addSurfaceDetail } from './src/render/visuals.js';
     import { CrashSequence } from './src/fx/crashSequence.js';
     import { FighterFx } from './src/fx/fighterFx.js';
+    import { newPilotG, stepPilotG } from './src/physics/pilotG.js';
+    import { drawFighterHud, screenLayout } from './src/hud/fighterHud.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -655,6 +657,21 @@
         this.stallOsc1.start();
         this.stallOsc2.start();
 
+        // Fighter pilot straining against g (breathing hiss in pulses), set by setStrain()
+        this.strainSrc = this.ctx.createBufferSource();
+        this.strainSrc.buffer = noiseBuffer;
+        this.strainSrc.loop = true;
+        this.strainFilter = this.ctx.createBiquadFilter();
+        this.strainFilter.type = 'bandpass';
+        this.strainFilter.frequency.setValueAtTime(650, this.ctx.currentTime);
+        this.strainFilter.Q.setValueAtTime(0.8, this.ctx.currentTime);
+        this.strainGain = this.ctx.createGain();
+        this.strainGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+        this.strainSrc.connect(this.strainFilter);
+        this.strainFilter.connect(this.strainGain);
+        this.strainGain.connect(this.masterCompressor);
+        this.strainSrc.start();
+
         this.lastWoW = true;
         this.cannonBuffer = noiseBuffer;
         this.initialized = true;
@@ -700,6 +717,14 @@
           this.propGain.gain.setTargetAtTime(0.18, this.ctx.currentTime, 0.05);
           this.jetGain.gain.setTargetAtTime(0.02, this.ctx.currentTime, 0.05);
         }
+      }
+
+      // level 0..1: how hard the pilot strains; a short breath every 2.6 s, the hiss louder with g
+      setStrain(level) {
+        if (!this.initialized || this.ctx.state !== 'running' || !this.strainGain) return;
+        const t = this.ctx.currentTime;
+        const breath = (t % 2.6) < 0.45 ? 1 : 0.3;
+        this.strainGain.gain.setTargetAtTime(level * 0.16 * breath, t, 0.06);
       }
 
       playCannon() {
@@ -893,8 +918,13 @@
       prevOnGround: true,
       apMaster: false,
       altHold: false,
-      targetAlt: 5000 // ft AMSL
+      targetAlt: 5000, // ft AMSL
+      limiterOff: false, // fighter: angle-of-attack limiter switched off [O]
+      maxG: 1
     };
+    // Fighter pilot's g tolerance over time (src/physics/pilotG.js) and what the pilot sees this frame
+    let pilotG = newPilotG();
+    let pilotVis = { grey: 0, tunnel: 0, black: 0, red: 0, controlsLost: false, gloc: false };
     window.skyforgeState = state; // console check: position, speed, throttle
 
     // FleetManager owns the 4 airframes (src/aircraft/*). Camera layers: exterior on LAYER_EXTERIOR
@@ -940,6 +970,10 @@
       state.altZeroFt = 0;
       state.gStress = 0;
       state.loadG = 1;
+      state.maxG = 1;
+      state.limiterOff = false;
+      state.spin = 0;
+      pilotG = newPilotG();
       state.stalled = false;
       state.overspeed = false;
       state.structuralFail = false;
@@ -1377,6 +1411,8 @@
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
       if (e.code === 'KeyL') window.startApproach(); // 3 degree final to the active runway
       if (e.code === 'KeyM') movingMap.toggleSize();
+      // Fighter: angle-of-attack limiter off / on (off = the wing can stall and spin; the HUD shows LIM OFF)
+      if (e.code === 'KeyO' && currentAircraft === 'fighter') state.limiterOff = !state.limiterOff;
       if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z, amslFt(state.pos.y));
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -1491,10 +1527,34 @@
     gVision.id = 'g-vision';
     gVision.style.cssText = 'position:fixed;inset:0;z-index:9000;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 50%, transparent 15%, #000 72%);';
     document.body.appendChild(gVision);
+    const gVisionBase = gVision.style.background;
+    // Fighter: grey-out (colour drains), tunnel vision (the dark closes in), blackout / G-LOC, red-out under negative g
+    const redVision = document.createElement('nav');
+    redVision.id = 'red-vision';
+    redVision.style.cssText = 'position:fixed;inset:0;z-index:9001;pointer-events:none;opacity:0;' +
+      'background:radial-gradient(circle at 50% 50%, rgba(170,0,0,0.35) 0%, rgba(110,0,0,0.9) 75%);';
+    document.body.appendChild(redVision);
+    let gVisionKey = '';
     function drawGVision() {
-      const stress = crashFx.active ? 0 : Math.min(1, state.gStress || 0);
-      gVision.style.opacity = stress;
-      gVision.style.backgroundColor = stress >= 1 ? '#000' : 'transparent';
+      if (currentAircraft !== 'fighter') {
+        if (gVisionKey) { gVision.style.background = gVisionBase; viewport.style.filter = ''; redVision.style.opacity = 0; gVisionKey = ''; }
+        const stress = crashFx.active ? 0 : Math.min(1, state.gStress || 0);
+        gVision.style.opacity = stress;
+        gVision.style.backgroundColor = stress >= 1 ? '#000' : 'transparent';
+        return;
+      }
+      const v = crashFx.active ? { grey: 0, tunnel: 0, black: 0, red: 0 } : pilotVis;
+      const q = (x) => Math.round(x * 50) / 50;
+      const grey = q(v.grey), tunnel = q(v.tunnel), black = q(v.black), red = q(v.red);
+      const key = `${grey}|${tunnel}|${black}|${red}`;
+      if (key === gVisionKey) return;
+      gVisionKey = key;
+      viewport.style.filter = grey > 0 ? `grayscale(${grey}) brightness(${1 - 0.3 * grey})` : '';
+      const r0 = 5 + 60 * (1 - tunnel);
+      gVision.style.background = `radial-gradient(circle at 50% 50%, rgba(0,0,0,${black}) ${r0}%, #000 ${r0 + 22}%)`;
+      gVision.style.backgroundColor = 'transparent';
+      gVision.style.opacity = Math.max(grey * 0.35, tunnel, black);
+      redVision.style.opacity = red;
     }
 
     // Before take-off: no power while the altitude does not read 0 (user, 03-Nov-2026). Tap the alert to set it to zero.
@@ -1512,9 +1572,39 @@
       zeroAlert.style.setProperty('display', blocked ? 'block' : 'none');
     }
 
+    // Fighter HUD data (both views): src/hud/fighterHud.js
+    const hudData = { fighterHud: false };
+    function fighterHudData() {
+      if (currentAircraft !== 'fighter') { hudData.fighterHud = false; return hudData; }
+      const altFt = heightAboveGroundFt();
+      return Object.assign(hudData, {
+        fighterHud: true, q: bodyQuat, vel: state.vel, yaw: state.rot.y, bankDeg: -state.rot.z * 180 / Math.PI,
+        headingDeg: ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360,
+        iasKt: state.ias, mach: state.mach, altFt, radarAlt: altFt < 5000, vsiFpm: state.vel.y * 196.85,
+        gLoad, maxG: state.maxG || 1, aoaDeg: (state.aoa || 0) * 180 / Math.PI, power: state.power,
+        isAfterburner: state.isAfterburner, limiterOff: state.limiterOff, stalled: !state.onGround && !!state.stalled,
+        overspeed: !!state.overspeed, fuelPct: cockpit.fuelKg / FIGHTER_FUEL_KG * 100, onGround: state.onGround,
+        nav: lastNav, nowMs: performance.now(), dim: !!(visuals.state && visuals.state.time === 'dusk')
+      });
+    }
+    // Chase view: world direction -> screen pixel through the camera (null when behind it)
+    const hudProjV = new THREE.Vector3();
+    const projectToScreen = (dir) => {
+      hudProjV.copy(dir).multiplyScalar(10000).add(camera.position).project(camera);
+      if (hudProjV.z > 1 || hudProjV.z < -1) return null;
+      return [(hudProjV.x * 0.5 + 0.5) * hudCanvas.width, (-hudProjV.y * 0.5 + 0.5) * hudCanvas.height];
+    };
+    let hudLayout = null, hudLayoutKey = '';
+
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
       if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
+      if (currentAircraft === 'fighter' && !twoPlayer && !crashFx.active) {
+        const key = `${hudCanvas.width}x${hudCanvas.height}${touchPlay}`;
+        if (key !== hudLayoutKey) { hudLayout = screenLayout(hudCanvas.width, hudCanvas.height, touchPlay, '#46ff8c'); hudLayoutKey = key; }
+        drawFighterHud(ctx, hudLayout, fighterHudData(), projectToScreen);
+        return;
+      }
       const cx = 120;
       const cy = hudCanvas.height - 120;
 
@@ -1561,6 +1651,7 @@
 
     // Cockpit camera / HUD helpers
     let gLoad = 1.0;
+    const FIGHTER_FUEL_KG = 8200;   // full internal fuel (src/aircraft/cockpitInterior.js COCKPIT_SPECS.fighter)
     const velBefore = new THREE.Vector3();
     const fwdDir = new THREE.Vector3(); // horizontal nose direction
     const tmpVec = new THREE.Vector3();
@@ -1660,11 +1751,17 @@
           autoAltFt: state.apMaster && state.altHold ? state.targetAlt - amslFt(state.pos.y) : null,
           wingsLevel: state.apMaster && !state.navMode,
           gentleRoll: !!state.navMode,
-          hM: heightM
+          hM: heightM,
+          // fighter: weight falls as the fuel burns (profile mass = full tanks); the limiter switch
+          massKg: currentAircraft === 'fighter' ? profile.mass - Math.max(0, FIGHTER_FUEL_KG - cockpit.fuelKg) : undefined,
+          limiterOff: currentAircraft === 'fighter' && state.limiterOff
         }, profile, currentAircraft, dt);
-        // Human limit: holding more g than the pilot tolerates narrows the view, then blacks it out
-        const tolerance = AIR[currentAircraft].gTolerance;
-        state.gStress = Math.max(0, Math.min(1.2, (state.gStress || 0) + (state.loadG > tolerance ? (state.loadG - tolerance) * 0.2 : -0.35) * dt));
+        // Human limit: holding more g than the pilot tolerates narrows the view, then blacks it out.
+        // The fighter's pilot has the time-based model (src/physics/pilotG.js), stepped below every frame.
+        if (currentAircraft !== 'fighter') {
+          const tolerance = AIR[currentAircraft].gTolerance;
+          state.gStress = Math.max(0, Math.min(1.2, (state.gStress || 0) + (state.loadG > tolerance ? (state.loadG - tolerance) * 0.2 : -0.35) * dt));
+        }
         // Warning horn past the never-exceed speed; well past it the airframe breaks up
         if (state.overspeed && performance.now() > cueBeepAt) { cueBeep(); cueBeepAt = performance.now() + 450; }
         if (state.structuralFail && !landing.crashResetAt) crash('STRUCTURE FAILED - OVERSPEED');
@@ -1846,6 +1943,14 @@
       tmpVec.y += 9.81;
       const rawG = Math.max(-3, Math.min(10, tmpVec.dot(tmpUp) / 9.81));
       gLoad += (rawG - gLoad) * Math.min(1, dt / 0.3);
+      if (currentAircraft === 'fighter') {
+        pilotVis = stepPilotG(pilotG, state.onGround || crashFx.active ? 1 : state.loadG, dt);
+        state.gStress = pilotVis.controlsLost ? 1 : Math.min(0.99, pilotG.stress);
+        const strain = state.onGround || pilotVis.gloc ? 0 : Math.max(0, Math.min(1, (state.loadG - 5.5) / 3.5));
+        audio.setStrain(strain);
+      } else {
+        audio.setStrain(0);
+      }
 
       // Airframe animation: control surfaces, propeller / rotors, afterburner, cargo ramp
       aircraft.update(dt, {
@@ -1879,7 +1984,8 @@
         fpmValid: state.vel.length() > 5 && fwdSpeed > 1,
         fpmAz: Math.atan2(bodyVel.x, Math.max(1, fwdSpeed)),
         fpmEl: Math.atan2(bodyVel.y, Math.max(1, fwdSpeed)),
-        nav: navData
+        nav: navData,
+        ...fighterHudData()
       }, { pitch: pIn, roll: rIn, yaw: yIn }, performance.now(), cameraMode === 'cockpit');
 
       if (cameraMode === 'cockpit') {
