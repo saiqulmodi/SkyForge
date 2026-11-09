@@ -145,5 +145,66 @@ function fly(s, sec, inputFn, hM, opts = {}) {
   check('after G-LOC at 1 g: controls back within 10 s', back !== null && back < 10, `back after ${back?.toFixed(1)} s`);
 }
 
+// 8. Aerobatics autopilot (src/flight/maneuvers.js) flown on the same physics, game-style throttle spool
+{
+  const { ManeuverPilot, ManeuverScore, predictPath } = await import(new URL('src/flight/maneuvers.js', ROOT).href);
+  const az = (s) => Math.atan2(-s.vel.x, -s.vel.z);
+  const wrapD = (a) => Math.atan2(Math.sin(a), Math.cos(a)) * DEG;
+  const env = (s) => ({ ias: s.vel.length() * Math.sqrt(atmosphere(s.pos.y).sigma) * 1.94384, aglM: s.pos.y, turnDir: -1 });
+  function flyManeuver(num, kt, hM, handOverAt = null) {
+    const s = newState(kt, hM); s.power = 80; s.throttle = 0.8;
+    fly(s, 2, null, hM);                                   // settle hands-off
+    const p = new ManeuverPilot();
+    const y0 = s.pos.y, a0 = az(s);
+    const ghost = predictPath(num, s, Object.assign(env(s), { profile: P, massKg: P.mass, hMOf: (y) => y, step: stepFixedWingAir }));
+    const sc = new ManeuverScore(); sc.start(ghost, num);
+    const st = p.start(num, s, env(s));
+    if (!st.ok) return { ok: false, why: st.why };
+    let t = 0, nMax = 0, minY = s.pos.y, maxY = s.pos.y, result = null;
+    let manual = false;
+    while ((p.active || (manual && sc.on)) && t < 90) {
+      if (handOverAt !== null && t >= handOverAt && !manual) { manual = true; p.stop(); }
+      const u = manual ? { pitch: 0, roll: 0, yaw: 0 } : p.update(s, DT);
+      if (!u) break;
+      if (u.throttle !== undefined) s.throttle = u.throttle;
+      s.power += (s.throttle * 100 - s.power) * Math.min(1, AIR.fighter.spool * DT);
+      s.isAfterburner = s.throttle > 0.7;
+      stepFixedWingAir(s, { pitch: u.pitch, roll: u.roll, yaw: u.yaw, autoAltFt: null, hM: s.pos.y, massKg: P.mass }, P, 'fighter', DT);
+      s.pos.addScaledVector(s.vel, DT);
+      result = sc.update(s.pos, s.vel, DT) || result;
+      nMax = Math.max(nMax, s.loadG); minY = Math.min(minY, s.pos.y); maxY = Math.max(maxY, s.pos.y);
+      t += DT;
+    }
+    result = result || sc.finish(s.pos, s.vel);
+    return { ok: true, t, dHdg: wrapD(az(s) - a0), dAlt: s.pos.y - y0, nMax, minDy: minY - y0, maxDy: maxY - y0,
+      kt: s.vel.length() / KT, done: !p.active, score: result ? result.score : null, ghostEnd: ghost ? ghost.points.length : 0 };
+  }
+  const show = (r) => `hdg ${r.dHdg.toFixed(1)} deg, alt ${r.dAlt.toFixed(0)} m (range ${r.minDy.toFixed(0)}..${r.maxDy.toFixed(0)}), max ${r.nMax.toFixed(1)} g, ${r.t.toFixed(1)} s, exit ${r.kt.toFixed(0)} kt, score ${r.score}`;
+  const rev = (d) => 180 - Math.abs(d);
+  let r;
+  r = flyManeuver(1, 470, 2000);
+  check('1 LOOP closes: heading +-5, height +-150 m, <= 7.6 g', r.done && Math.abs(r.dHdg) < 5 && Math.abs(r.dAlt) < 150 && r.nMax <= 7.6 && r.maxDy > 1000, show(r));
+  r = flyManeuver(2, 470, 2000);
+  check('2 IMMELMANN: heading 180 +-5, ends higher', r.done && rev(r.dHdg) < 5 && r.dAlt > 1000, show(r));
+  r = flyManeuver(3, 300, 4000);
+  check('3 SPLIT-S: heading 180 +-5, ends lower, stays above 2,000 m loss', r.done && rev(r.dHdg) < 5 && r.dAlt < -500 && r.minDy > -2000, show(r));
+  r = flyManeuver(4, 400, 2000);
+  check('4 BREAK 180: heading 180 +-10, height +-150 m', r.done && rev(r.dHdg) < 10 && Math.abs(r.dAlt) < 150, show(r));
+  r = flyManeuver(5, 400, 2000);
+  check('5 AILERON ROLL: heading +-5, height +-60 m', r.done && Math.abs(r.dHdg) < 5 && Math.abs(r.dAlt) < 60, show(r));
+  r = flyManeuver(6, 400, 2000);
+  check('6 BARREL ROLL: heading +-15, height +-250 m', r.done && Math.abs(r.dHdg) < 15 && Math.abs(r.dAlt) < 250, show(r));
+  r = flyManeuver(7, 470, 2500);
+  check('7 CUBAN EIGHT: back on the entry heading +-10, height +-250 m', r.done && Math.abs(r.dHdg) < 10 && Math.abs(r.dAlt) < 250, show(r));
+  r = flyManeuver(8, 400, 2000);
+  check('8 WINGOVER: heading 180 +-10, height +-250 m', r.done && rev(r.dHdg) < 10 && Math.abs(r.dAlt) < 250, show(r));
+  r = flyManeuver(1, 470, 2000, 8);
+  check('score: letting go of the stick half way through a loop scores low (< 60)', r.score !== null && r.score < 60, `score ${r.score}`);
+  r = flyManeuver(1, 300, 2000);
+  check('entry check: LOOP refused below 400 kt', !r.ok && r.why === 'SPD LOW', r.why || 'started');
+  r = flyManeuver(3, 300, 1000);
+  check('entry check: SPLIT-S refused below 1,500 m', !r.ok && r.why === 'ALT LOW', r.why || 'started');
+}
+
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nAll checks passed');
 process.exit(failed ? 1 : 0);

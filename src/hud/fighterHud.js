@@ -6,7 +6,8 @@
 // drawFighterHud(ctx, L, d, proj)
 //   L: layout { W, H, clip: {x, y, w, h}, font, lw, color, compact, tapeLX, tapeRX, tapeHalf, midY, headY, bankY, bankR, outline }
 //   d: flight data { q (body quaternion), vel (world m/s), yaw (rot.y), bankDeg, headingDeg, iasKt, mach, altFt, radarAlt,
-//      vsiFpm, gLoad, maxG, aoaDeg, power, isAfterburner, limiterOff, stalled, overspeed, fuelPct, onGround, nav, nowMs }
+//      vsiFpm, gLoad, maxG, aoaDeg, power, isAfterburner, limiterOff, stalled, overspeed, fuelPct, onGround, nav, nowMs,
+//      mnv: { text, stars } manoeuvre line or null }
 //   proj(worldDir) -> [x, y] on the display, or null when the direction is behind the viewer
 import * as THREE from 'three';
 
@@ -213,6 +214,15 @@ export function drawFighterHud(ctx, L, d, proj) {
     if (Math.abs(d.bankDeg) >= 5) ctx.fillText(`${Math.round(Math.abs(d.bankDeg))}`, bx, by + R + font * 2);
   }
 
+  // Aerobatics: the manoeuvre being flown, or its score with stars when it ends (src/flight/maneuvers.js)
+  if (d.mnv) {
+    const y = L.compact ? clip.y + font * 1.2 : L.mnvY;
+    ctx.font = `bold ${Math.round(font * 1.05)}px monospace`;
+    ctx.textAlign = 'center';
+    const stars = d.mnv.stars ? '  ' + '★'.repeat(d.mnv.stars) + '☆'.repeat(3 - d.mnv.stars) : '';
+    ctx.fillText(d.mnv.text + stars, W / 2, y);
+  }
+
   // Warnings: short, flashing, above the bank scale
   const warn = [];
   if (d.stalled) warn.push('STALL');
@@ -274,7 +284,7 @@ export function screenLayout(W, H, compact, color) {
     clip: { x: W / 2 - cw / 2, y: cy - ch / 2, w: cw, h: ch },
     tapeLX: W / 2 - cw / 2 - font * 3.2, tapeRX: W / 2 + cw / 2 + font * 3.2,
     tapeHalf: ch * 0.34, midY: cy,
-    headY: cy - ch / 2 - font * 0.4,
+    headY: cy - ch / 2 - font * 0.4, mnvY: cy - ch / 2 - font * 2.6,
     bankY: cy + ch / 2 - font * 4.2, bankR: font * 3.2
   };
 }
@@ -286,6 +296,6 @@ export function combinerLayout(W, H, color) {
     W, H, font, lw: 2, color, compact: false, outline: false,
     clip: { x: W * 0.2, y: font * 2.2, w: W * 0.6, h: H - font * 4.4 },
     tapeLX: W * 0.1, tapeRX: W * 0.9, tapeHalf: H * 0.24, midY: H * 0.5,
-    headY: font * 1.9, bankY: H - font * 6.4, bankR: font * 3
+    headY: font * 1.9, mnvY: font * 4.1, bankY: H - font * 6.4, bankR: font * 3
   };
 }

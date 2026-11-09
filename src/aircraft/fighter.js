@@ -166,6 +166,11 @@ export function createFighter() {
     color: 0xa8dcff, transparent: true, opacity: 0.8,
     blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
   });
+  const diamondGeo = new THREE.SphereGeometry(0.2, 10, 6);
+  diamondGeo.scale(1, 1, 0.55);
+  const diamondMat = new THREE.MeshBasicMaterial({
+    color: 0xfff1c4, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+  });
   const flameGeo = new THREE.ConeGeometry(0.4, 1, 14);
   flameGeo.rotateX(Math.PI / 2);   // tip points aft
   flameGeo.translate(0, 0, 0.5);
@@ -176,7 +181,14 @@ export function createFighter() {
     core.position.copy(flame.position);
     flame.visible = core.visible = false;
     mesh.add(flame, core);
-    return { flame, core };
+    // Shock diamonds (09-Nov-2026): bright knots in a full-afterburner flame, spaced along its length
+    const diamonds = [0.2, 0.4, 0.6, 0.8].map(() => {
+      const dm = new THREE.Mesh(diamondGeo, diamondMat);
+      dm.visible = false;
+      mesh.add(dm);
+      return dm;
+    });
+    return { flame, core, diamonds, x };
   });
 
   // Landing gear folds away after take-off and comes down low on approach
@@ -220,12 +232,20 @@ export function createFighter() {
       burnerMat.opacity = 0.2 + 0.7 * flightState.power / 100;
       const burnGoal = flightState.throttle > 0.7 ? (flightState.power / 100 - 0.6) / 0.4 : 0;
       burn += (Math.max(0, burnGoal) - burn) * Math.min(1, 5 * dt);
-      flames.forEach(({ flame, core }) => {
+      const knots = Math.max(0, (burn - 0.45) / 0.55);   // diamonds only in a strong burner
+      diamondMat.opacity = 0.85 * knots;
+      flames.forEach(({ flame, core, diamonds }) => {
         flame.visible = core.visible = burn > 0.02;
+        diamonds.forEach((dm) => { dm.visible = flame.visible && knots > 0.02; });
         if (!flame.visible) return;
         const flicker = 1 + Math.random() * 0.12;
-        flame.scale.set(0.8 + 0.25 * burn, 0.8 + 0.25 * burn, (1.2 + 3.0 * burn) * flicker);
+        const len = (1.2 + 3.0 * burn) * flicker;
+        flame.scale.set(0.8 + 0.25 * burn, 0.8 + 0.25 * burn, len);
         core.scale.set(0.55, 0.55, (0.6 + 1.3 * burn) * flicker);
+        diamonds.forEach((dm, i) => {
+          dm.position.set(flame.position.x, flame.position.y, flame.position.z + len * (0.2 + 0.2 * i));
+          dm.scale.setScalar((1 - 0.18 * i) * (0.9 + Math.random() * 0.2));
+        });
       });
       const gearGoal = flightState.gearDown === false ? 0 : 1;
       gearOut += Math.max(-dt / 2.5, Math.min(dt / 2.5, gearGoal - gearOut));

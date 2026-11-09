@@ -11,6 +11,19 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 ## Done
 
+### Round 4b, 09-Nov-2026: fighter upgrade, phase 2 (aerobatics, ghost guide, flight-path visuals)
+- Eight manoeuvres flown by an autopilot that moves the stick, rudder and throttle through the same flight physics (src/flight/maneuvers.js). Chase view: number keys 1-8. Cockpit view (numbers turn the head there): G, then the number.
+  1 Loop, 2 Immelmann, 3 Split-S (needs 1,500 m), 4 Break 180 (turns towards the nearest runway), 5 Aileron roll, 6 Barrel roll (true helix), 7 Cuban eight, 8 Wingover.
+- Loops fly a true constant-radius circle; the throttle manages the energy like a pilot, so the exit speed matches the entry.
+- Entry checks: too slow or too low and the HUD shows e.g. LOOP SPD LOW and nothing starts.
+- Moving the stick or rudder hands the aircraft back at once (HUD: MANUAL); the ghost and the score stay, so the pilot can finish it by hand.
+- Ghost guide: the manoeuvre is flown ahead on a copy of the aircraft; its path is drawn as a faint line with rings about every 250 m (the next three bright, passed ones dim).
+- Score 0-100 and stars on the HUD at the end: closeness to the ghost path, exit heading and exit height. Letting go half way through a loop scores 0.
+- Flight-path visuals (src/fx/flightPath.js): wing-tip ribbons for the last 20 s (cyan normal, amber Mach 0.85-1.2, white above Mach 1.2, red above 5 g), fading near the camera; dots for the next 8 s of flight; contrails from both engines above 8,000 m.
+- Wing vapour over the upper wing at high angle of attack in a hard pull low down; shock diamonds in a strong afterburner flame.
+- Tests: 11 more checks (every manoeuvre's exit heading and height, g within 7.6, entry refusals, manual score), 29 in all, all pass. In the browser: aileron roll scored 99 with 3 stars, cockpit G+1, entry refusal and MANUAL hand-over checked; no console errors.
+- Not done: the hammerhead (stall turn). This fighter has no thrust vectoring, and its rudder loses its grip near zero speed, so the physics cannot cartwheel it; 8 is the wingover instead. Heat haze behind the engines was left out (it needs a screen-distortion pass that is too heavy for phones).
+
 ### Round 4, 09-Nov-2026: fighter upgrade, phase 1 (flight model, g effects, HUD)
 - Weight: the fighter gets lighter as fuel burns (full tanks = the old weight, so take-off is unchanged). A light fighter pulls more g and accelerates faster.
 - Roll rate up to 240 deg/s at full stick (was 172).

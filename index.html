@@ -579,6 +579,8 @@
     import { FighterFx } from './src/fx/fighterFx.js';
     import { newPilotG, stepPilotG } from './src/physics/pilotG.js';
     import { drawFighterHud, screenLayout } from './src/hud/fighterHud.js';
+    import { ManeuverPilot, ManeuverScore, predictPath, MANEUVERS } from './src/flight/maneuvers.js';
+    import { FlightPathFx } from './src/fx/flightPath.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -925,6 +927,13 @@
     // Fighter pilot's g tolerance over time (src/physics/pilotG.js) and what the pilot sees this frame
     let pilotG = newPilotG();
     let pilotVis = { grey: 0, tunnel: 0, black: 0, red: 0, controlsLost: false, gloc: false };
+    // Fighter aerobatics: autopilot, score, HUD line, ghost timer (declared here: the first reset at start-up stops them)
+    const mnv = new ManeuverPilot();
+    const mnvScore = new ManeuverScore();
+    let gPrefixUntil = 0;
+    let mnvMsg = null;          // { text, stars, until } shown on the HUD
+    let ghostClearAt = 0;
+    let flightPathFx = null;    // src/fx/flightPath.js, made with the other effects below
     window.skyforgeState = state; // console check: position, speed, throttle
 
     // FleetManager owns the 4 airframes (src/aircraft/*). Camera layers: exterior on LAYER_EXTERIOR
@@ -974,6 +983,7 @@
       state.limiterOff = false;
       state.spin = 0;
       pilotG = newPilotG();
+      stopManeuver();
       state.stalled = false;
       state.overspeed = false;
       state.structuralFail = false;
@@ -1191,6 +1201,7 @@
 
     // Puts the aircraft on a 3 degree final to the active runway (fixed-wing 8 km out, helicopter 1.5 km)
     window.startApproach = () => {
+      stopManeuver();
       const e = activeEnd;
       const v = profile.approachKt / 1.94384;
       const dist = profile.rotorcraft ? 1500 : 8000;
@@ -1389,7 +1400,13 @@
       if (e.code === 'KeyC') {
         window.toggleCameraView();
       }
-      if (cameraMode === 'cockpit') {
+      // Fighter aerobatics (1-8): in the chase view the number key flies it; in the cockpit the numbers turn the head,
+      // so there press G first, then the number (within 1.5 s)
+      const mnvKey = /^(Digit|Numpad)([1-8])$/.exec(e.code);
+      const gArmed = performance.now() <= gPrefixUntil;
+      if (e.code === 'KeyG' && currentAircraft === 'fighter') gPrefixUntil = performance.now() + 1500;
+      if (mnvKey && currentAircraft === 'fighter' && (cameraMode !== 'cockpit' || gArmed)) { gPrefixUntil = 0; startManeuver(+mnvKey[2]); }
+      else if (cameraMode === 'cockpit') {
         if (e.code === 'Digit1' || e.code === 'Numpad1') window.lookCockpit('left45');
         if (e.code === 'Digit2' || e.code === 'Numpad2') window.lookCockpit('down');
         if (e.code === 'Digit3' || e.code === 'Numpad3') window.lookCockpit('right45');
@@ -1572,6 +1589,40 @@
       zeroAlert.style.setProperty('display', blocked ? 'block' : 'none');
     }
 
+    // ---- Fighter aerobatics (src/flight/maneuvers.js): autopilot, ghost guide, score ----
+    const fighterMassKg = () => profile.mass - Math.max(0, FIGHTER_FUEL_KG - cockpit.fuelKg);
+    function startManeuver(n) {
+      if (state.onGround || crashFx.active || !MANEUVERS[n]) return;
+      // turns go towards the nearest runway (left when there is none)
+      let turnDir = -1;
+      const nr = movingMap.nearest;
+      if (nr) {
+        const hdg = ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360;
+        turnDir = (((nr.bearing - hdg + 540) % 360) - 180) >= 0 ? 1 : -1;
+      }
+      const env = { ias: state.ias, aglM: heightAboveGroundFt() * 0.3048, turnDir, onGround: state.onGround };
+      const res = mnv.start(n, state, env);
+      if (!res.ok) { mnvMsg = { text: `${MANEUVERS[n].name}  ${res.why}`, until: performance.now() + 2500 }; return; }
+      state.apMaster = false; state.altHold = false; state.navMode = false;
+      updateAPReadout();
+      const ghost = predictPath(n, state, Object.assign({}, env, { profile, massKg: fighterMassKg(), hMOf: (y) => amslFt(y) * 0.3048, step: stepFixedWingAir }));
+      mnvScore.start(ghost, n);
+      flightPathFx.setGhost(ghost ? ghost.points : null);
+      ghostClearAt = 0;
+      mnvMsg = { text: MANEUVERS[n].name, until: Infinity };
+    }
+    function stopManeuver() {
+      mnv.stop();
+      mnvScore.stop();
+      if (flightPathFx) flightPathFx.setGhost(null);
+      mnvMsg = null;
+    }
+    function maneuverResult(r) {
+      if (!r) return;
+      mnvMsg = { text: `${r.name}  ${r.score}`, stars: r.stars, until: performance.now() + 5000 };
+      ghostClearAt = performance.now() + 4000;
+    }
+
     // Fighter HUD data (both views): src/hud/fighterHud.js
     const hudData = { fighterHud: false };
     function fighterHudData() {
@@ -1584,7 +1635,8 @@
         gLoad, maxG: state.maxG || 1, aoaDeg: (state.aoa || 0) * 180 / Math.PI, power: state.power,
         isAfterburner: state.isAfterburner, limiterOff: state.limiterOff, stalled: !state.onGround && !!state.stalled,
         overspeed: !!state.overspeed, fuelPct: cockpit.fuelKg / FIGHTER_FUEL_KG * 100, onGround: state.onGround,
-        nav: lastNav, nowMs: performance.now(), dim: !!(visuals.state && visuals.state.time === 'dusk')
+        nav: lastNav, nowMs: performance.now(), dim: !!(visuals.state && visuals.state.time === 'dusk'),
+        mnv: mnvMsg && performance.now() < mnvMsg.until ? mnvMsg : null
       });
     }
     // Chase view: world direction -> screen pixel through the camera (null when behind it)
@@ -1643,6 +1695,9 @@
     let lastFrameMs = 0;
     let lastMach = 0;
     const fighterFx = new FighterFx(fleetContainer, scene, LAYER_EXTERIOR);
+    flightPathFx = new FlightPathFx(scene);   // wing-tip ribbons, future path, ghost rings, contrails
+    window.skyforgeManeuver = (n) => startManeuver(n);   // console check
+    window.skyforgeManeuverState = () => ({ msg: mnvMsg, flying: mnv.flying, scoring: mnvScore.on });   // console check
     const chaseUp = new THREE.Vector3(0, 1, 0);
     const blendUp = new THREE.Vector3();
     const upTurn = new THREE.Quaternion();
@@ -1706,6 +1761,21 @@
       }
       // Pilot blacked out by sustained g: no control until the blood returns
       if (state.gStress >= 1) { pIn = 0; rIn = 0; yIn = 0; }
+
+      // Aerobatics autopilot: moving the stick or rudder hands the aircraft back (the ghost and the score stay)
+      if (mnv.active && currentAircraft === 'fighter') {
+        if (Math.abs(pIn) > 0.3 || Math.abs(rIn) > 0.3 || Math.abs(yIn) > 0.3 || state.onGround) {
+          mnv.stop();
+          if (mnvMsg && mnvScore.on) mnvMsg.text = `${mnvMsg.text.split('  ')[0]}  MANUAL`;
+        } else {
+          const u = mnv.update(state, dt);
+          if (u) {
+            pIn = u.pitch; rIn = u.roll; yIn = u.yaw;
+            if (u.throttle !== undefined) state.throttle = u.throttle;
+          }
+          if (!mnv.active && mnv.finished) { mnv.finished = false; maneuverResult(mnvScore.finish(state.pos, state.vel)); }
+        }
+      }
 
       if (state.navMode && (!state.apMaster || state.onGround || profile.rotorcraft || !lastNav || lastNav.complete)) {
         state.navMode = false;
@@ -1961,6 +2031,7 @@
         iasKt: state.ias,
         gearDown: state.onGround || heightAboveGroundFt() < 300
       });
+      state.hAmslM = heightM;
       fighterFx.update(dt, state, currentAircraft === 'fighter');
       if (state.mach >= 1 && lastMach < 1 && !state.onGround) audio.playBoom();
       lastMach = state.mach;
@@ -2051,6 +2122,9 @@
         crashFx.applyCamera(camera);
         if (!playing) resetToThreshold();
       }
+      if (currentAircraft === 'fighter' && mnvScore.on) maneuverResult(mnvScore.update(state.pos, state.vel, dt));
+      if (ghostClearAt && performance.now() > ghostClearAt) { ghostClearAt = 0; flightPathFx.setGhost(null); }
+      flightPathFx.update(dt, state, currentAircraft === 'fighter' && !crashFx.active, heightM, camera.position, mnvScore.on ? mnvScore.i : -1);
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();
