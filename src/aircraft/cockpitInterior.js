@@ -491,6 +491,7 @@ class CombinerHud {
       ctx.textAlign = 'center';
       ctx.fillText(`${d.nav.name} ${d.nav.distNm.toFixed(1)}NM ${d.nav.targetAltFt}FT`, W / 2, H - 32);
     }
+    this.texture.needsUpdate = true;   // send the new picture to the GPU (it was drawn once and then never refreshed)
   }
 
   // Fighter (09-Nov-2026): the full fighter HUD (src/hud/fighterHud.js). World directions go into the body frame and
