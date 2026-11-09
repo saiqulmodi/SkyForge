@@ -109,7 +109,9 @@ const axis = new THREE.Vector3();
 // input: { pitch: +1 pull .. -1 push, roll: +1 right, yaw: +1 left, autoAltFt: null or error to the target altitude,
 //          wingsLevel: autopilot levels the wings, gentleRoll: NAV limits the roll rate, hM: height above sea level,
 //          massKg: weight now (fighter: take-off weight minus the fuel burnt; the profile's mass = full tanks),
-//          limiterOff: fighter only, the flight computer's angle-of-attack limiter switched off (stall, wing drop, spin) }
+//          limiterOff: fighter only, the flight computer's angle-of-attack limiter switched off (stall, wing drop, spin),
+//          dragAdd: extra share of parasite drag from the stores under the wings (0.2 = 20 % more), rollScale: roll rate
+//          factor with heavy stores (1 = clean) }
 export function stepFixedWingAir(state, input, p, type, dt) {
   const air = AIR[type];
   const atm = atmosphere(input.hM);
@@ -174,7 +176,7 @@ export function stepFixedWingAir(state, input, p, type, dt) {
   const lift = clamp(G * nAvail * (cl / clMax), air.nMin * 1.1 * G, air.nMax * 1.1 * G);
   liftDir.copy(up).addScaledVector(vHat, -up.dot(vHat));
   if (liftDir.lengthSq() > 1e-6) liftDir.normalize(); else liftDir.copy(up);
-  const drag = parasiteDrag(v, p, air, atm, stalled) * mr + Math.abs(lift) * dragShare(cl, p);
+  const drag = parasiteDrag(v, p, air, atm, stalled) * (1 + (input.dragAdd || 0)) * mr + Math.abs(lift) * dragShare(cl, p);
   const side = clamp(-beta * v * v * 0.002, -2 * G, 2 * G);
   // The fighter's flight computer eases the engines back as it nears its speed limit, so power alone cannot overspeed it.
   // A steep dive still can.
@@ -211,7 +213,7 @@ export function stepFixedWingAir(state, input, p, type, dt) {
   const yawRate = pathYaw + input.yaw * air.yaw * ctrl - 2 * beta + spin;
 
   // Roll builds up over a moment; the autopilot is gentle; sideslip rolls the aircraft (rudder banks it)
-  let rollWanted = -input.roll * air.roll * ctrl + 1.5 * beta + (stalled ? state.wingDrop : 0) + spin * 0.7;
+  let rollWanted = -input.roll * air.roll * (input.rollScale || 1) * ctrl + 1.5 * beta + (stalled ? state.wingDrop : 0) + spin * 0.7;
   if (input.wingsLevel) rollWanted += clamp(-state.rot.z * 0.5, -0.35, 0.35);
   if (input.gentleRoll) rollWanted = clamp(rollWanted, -0.35, 0.35);
   if (air.bankMax) {   // a heavy aircraft is held inside its bank limit

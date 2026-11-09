@@ -8,9 +8,10 @@
 //   d: flight data { q (body quaternion), vel (world m/s), yaw (rot.y), bankDeg, headingDeg, iasKt, mach, altFt, radarAlt,
 //      vsiFpm, gLoad, maxG, aoaDeg, power, isAfterburner, limiterOff, stalled, overspeed, fuelPct, onGround, nav, nowMs,
 //      mnv: { text, stars } manoeuvre line or null, aoaBracket: approach AoA in deg (gear down) or null,
-//      ils: { inRange, locDeviation, gsDeviation } }
+//      ils: { inRange, locDeviation, gsDeviation }, weapons: see src/hud/weaponsHud.js (or null) }
 //   proj(worldDir) -> [x, y] on the display, or null when the direction is behind the viewer
 import * as THREE from 'three';
+import { drawWeaponsConformal, drawWeaponsFixed } from './weaponsHud.js';
 
 const DEG = Math.PI / 180;
 const _c = new THREE.Vector3();
@@ -160,6 +161,8 @@ export function drawFighterHud(ctx, L, d, proj) {
     ctx.stroke();
     ctx.restore();
   }
+  // Weapons (phase 4): target box / arrow, IR seeker, gun lead ring, CCIP pipper (src/hud/weaponsHud.js)
+  drawWeaponsConformal(ctx, L, d.weapons, P, d);
   ctx.restore();
 
   // ---------- Fixed part ----------
@@ -256,6 +259,7 @@ export function drawFighterHud(ctx, L, d, proj) {
     ctx.fillStyle = d.stalled || d.overspeed ? '#ff5a4f' : col;
     ctx.fillText(warn.join('  '), W / 2, L.compact ? clip.y + clip.h - font : L.bankY - font * 0.8);
   }
+  drawWeaponsFixed(ctx, L, d.weapons, d);
   ctx.restore();
 }
 

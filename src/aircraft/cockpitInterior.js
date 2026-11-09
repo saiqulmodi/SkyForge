@@ -767,7 +767,9 @@ function layoutFighter(g, mat, mfds) {
   addBox(g, mat.matte, 0.14, 0.03, 0.1, 0, -0.09, -0.53);
   addPanel(g, mat, mfds, {
     w: 0.62, h: 0.22, x: 0, y: -0.25, z: -0.6, tilt: -0.2,
-    screens: [{ page: 'pfd', x: -0.2, y: 0, size: 0.16 }, { page: 'nav', x: 0, y: 0, size: 0.16 }, { page: 'eng', x: 0.2, y: 0, size: 0.16 }]
+    // phase 4: radar picture and stores page join the flight, map and engine pages
+    screens: [{ page: 'pfd', x: -0.248, y: 0, size: 0.115 }, { page: 'radar', x: -0.124, y: 0, size: 0.115 }, { page: 'nav', x: 0, y: 0, size: 0.115 },
+      { page: 'sms', x: 0.124, y: 0, size: 0.115 }, { page: 'eng', x: 0.248, y: 0, size: 0.115 }]
   });
   addTub(g, mat, 0, 0.46, -0.42, -0.75, 0.3);
   addSeat(g, mat, 0, 0, 0, true);
@@ -867,7 +869,7 @@ function layoutAirliner(g, mat, mfds) {
 }
 
 const LAYOUTS = { fighter: layoutFighter, trainer: layoutTrainer, heli: layoutHeli, airliner: layoutAirliner };
-const MFD_PAGES = { fighter: ['pfd', 'nav', 'eng'], trainer: ['pfd', 'eng'], heli: ['pfd', 'eng'], airliner: ['pfd', 'nav', 'eng'] };
+const MFD_PAGES = { fighter: ['pfd', 'radar', 'nav', 'sms', 'eng'], trainer: ['pfd', 'eng'], heli: ['pfd', 'eng'], airliner: ['pfd', 'nav', 'eng'] };
 
 // eyeOffset (optional): the airframe's cockpitOffset; defaults to the spec offset
 export function buildCockpit(aircraftId, eyeOffset) {

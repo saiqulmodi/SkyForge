@@ -1,5 +1,6 @@
 ﻿import * as THREE from 'three';
 import { addSurface, addGearLeg, deflectSurfaces, disposeObject } from './airframeKit.js';
+import { makeStoreMesh, STATIONS as STORE_STATIONS } from '../combat/fighterWeapons.js';
 
 export function createFighter() {
   const fighterGroup = new THREE.Group();
@@ -200,6 +201,29 @@ export function createFighter() {
   mesh.add(gear);
   let gearOut = 1, burn = 0;
 
+  // Stores under the wings (phase 4): heat seekers on the wing-tip rails, radar missiles on the outer pylons,
+  // four 500 lb bombs on the inner pylons. Each disappears when it is fired (setStores); the pylons stay.
+  const pylonMat = new THREE.MeshStandardMaterial({ color: 0x6f7a85, roughness: 0.55, metalness: 0.2 });
+  const stores = {};
+  ['IR', 'RDR', 'BOMB'].forEach((kind) => {
+    stores[kind] = STORE_STATIONS[kind].map(([x, y, z]) => {
+      const m = makeStoreMesh(kind);
+      m.position.set(x, y, z);
+      mesh.add(m);
+      if (kind !== 'IR') {
+        const top = -0.06, h = Math.max(0.05, top - (y + (kind === 'BOMB' ? 0.137 : 0.09)));
+        const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.06, h, kind === 'BOMB' ? 0.9 : 1.4), pylonMat);
+        pylon.position.set(x, top - h / 2, z);
+        mesh.add(pylon);
+      } else {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 2.2), pylonMat);
+        rail.position.set(x, y + 0.08, z);
+        mesh.add(rail);
+      }
+      return m;
+    });
+  });
+
   return {
     id: 'fighter',
     name: '5th-Gen Stealth Fighter',
@@ -225,6 +249,11 @@ export function createFighter() {
     },
     cockpitOffset: new THREE.Vector3(0, 0.62, -1.3), // pilot eye inside the canopy
     chaseOffset: new THREE.Vector3(0, 3.4, 14.0),
+
+    // loadout: { IR: [1, 0], RDR: [...], BOMB: [...] } (1 = still on the aircraft)
+    setStores(loadout) {
+      for (const kind in stores) stores[kind].forEach((m, i) => { m.visible = !!loadout[kind][i]; });
+    },
 
     update(dt, flightState) {
       deflectSurfaces(surfaces, flightState.input);

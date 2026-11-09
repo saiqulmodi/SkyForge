@@ -535,8 +535,13 @@
         <button onclick="skyforgeManeuver(8)" title="Wingover">W-OVER [8]</button>
         <button id="btn-rtb" onclick="startRTB()" title="Return to the nearest runway: overhead break and landing">RTB [9]</button>
         <button id="btn-lim" onclick="toggleLimiter()" title="Angle-of-attack limiter">LIM ON [O]</button>
-        <button onclick="skyforgeGun()" title="Gun">GUN [SPACE]</button>
-        <button onclick="skyforgeMissile()" title="Missile (needs a radar lock)">MSL [F]</button>
+        <button id="btn-arm" onclick="toggleArm()" title="Master arm (cannot be switched on with the wheels on the ground)">SAFE [K]</button>
+        <button id="btn-wpn" onclick="cycleWeapon()" title="Weapon select: gun, heat-seeking missile, radar missile, bomb">GUN [Y]</button>
+        <button onpointerdown="skyforgeLockDown()" onpointerup="skyforgeLockUp()" title="Radar lock: click = lock / next target, hold = unlock">LOCK [T]</button>
+        <button onclick="skyforgeGun()" title="Gun (hold Space for a long burst)">GUN [SPACE]</button>
+        <button onclick="skyforgeMissile()" title="Fire the selected missile / drop a bomb">REL [F]</button>
+        <button onclick="skyforgeDecoy('FLARE')" title="Flares, a pair">FLR [U]</button>
+        <button onclick="skyforgeDecoy('CHAFF')" title="Chaff, a pair">CHF [I]</button>
       </div>
     </div>
 
@@ -629,6 +634,10 @@
     import { FlightPathFx } from './src/fx/flightPath.js';
     import { ReturnPilot } from './src/flight/returnToBase.js';
     import { PathMini } from './src/hud/pathMini.js';
+    import { Radar, RADAR } from './src/combat/radar.js';
+    import { FighterWeapons, WEAPON_NAME } from './src/combat/fighterWeapons.js';
+    import { OrdnanceFx } from './src/fx/ordnanceFx.js';
+    import { drawRadarPage, drawStoresPage } from './src/hud/radarScope.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -829,6 +838,62 @@
         osc.start();
         osc.stop(this.ctx.currentTime + 0.4);
       }
+
+      // Phase 4 weapon tones. kind: 'off' | 'growl' (heat seeker searching) | 'ir' (seeker sees a target: high tone)
+      setTone(kind) {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        const t = this.ctx.currentTime;
+        if (!this.toneOsc) {
+          this.toneOsc = this.ctx.createOscillator();
+          this.toneOsc.type = 'triangle';
+          this.toneGain = this.ctx.createGain();
+          this.toneGain.gain.setValueAtTime(0, t);
+          this.toneOsc.connect(this.toneGain);
+          this.toneGain.connect(this.masterCompressor);
+          this.toneOsc.start();
+        }
+        const growl = kind === 'growl';
+        this.toneOsc.frequency.setTargetAtTime(kind === 'ir' ? 1150 : 380 + (growl ? Math.random() * 90 : 0), t, 0.02);
+        this.toneGain.gain.setTargetAtTime(kind === 'off' ? 0 : growl ? 0.05 + Math.random() * 0.03 : 0.08, t, 0.03);
+      }
+      // short beeps: radar lock (two high), lock lost (one low)
+      beep(freq, dur, at = 0) {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        const t = this.ctx.currentTime + at;
+        const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.09, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.connect(gain); gain.connect(this.masterCompressor);
+        osc.start(t); osc.stop(t + dur + 0.02);
+      }
+      // noise burst through a filter: launch whoosh, bomb release thunk, flare pop, blast boom
+      noise(at, dur, f0, f1, vol, type = 'bandpass') {
+        if (!this.initialized || this.ctx.state !== 'running') return;
+        const t = this.ctx.currentTime + at;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.cannonBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = type;
+        filter.frequency.setValueAtTime(f0, t);
+        filter.frequency.exponentialRampToValueAtTime(f1, t + dur);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.03, dur / 4));
+        gain.gain.exponentialRampToValueAtTime(0.0005, t + dur);
+        src.connect(filter); filter.connect(gain); gain.connect(this.masterCompressor);
+        src.start(t, Math.random()); src.stop(t + dur + 0.05);
+      }
+      playLaunch() { this.noise(0, 1.4, 2400, 300, 0.5); }
+      playRelease() { this.noise(0, 0.25, 220, 90, 0.5, 'lowpass'); }
+      playPop() { this.noise(0, 0.12, 1800, 900, 0.25); }
+      // explosion distM away: later and softer the further it is
+      playBlast(distM) {
+        const vol = Math.max(0.03, Math.min(0.9, 1500 / Math.max(300, distM)));
+        this.noise(Math.min(6, distM / 343), 1.6, 260, 60, vol, 'lowpass');
+      }
     }
 
     const audio = new ProceduralAudioEngine();
@@ -930,7 +995,16 @@
       onDestroyed: (t) => flightMsg(`SPLASH - ${t.id} DESTROYED`, '#f97316', 3500)
     });
     let combatNow = null;
-    let missilesLeft = 6;
+    // Phase 4 (fighter upgrade): radar with lock, gun, heat-seeking + radar missiles, bombs with CCIP, flares, chaff
+    const ordFx = new OrdnanceFx(scene, (x, z) => terrain.groundY(x, z));
+    const radar = new Radar((x, z) => terrain.groundY(x, z));
+    const weapons = new FighterWeapons(scene, {
+      groundY: (x, z) => terrain.groundY(x, z), hMOf: (y) => amslFt(y) * 0.3048, fx: ordFx, targets: () => combat.targets.targets
+    });
+    window.skyforgeWeapons = weapons; window.skyforgeRadar = radar; // console check
+    let wpnMsg = null;            // short weapon cue on the HUD { text, until }
+    let tDownAt = 0, tUnlocked = false, padTrigger = false, gunBurstUntil = 0;
+    const ccipNow = { point: new THREE.Vector3(), t: 0, valid: false };
     const navComputer = new NavComputer(); // route to the destination (default: back to the departure runway)
     navComputer.groundFtAt = (x, z) => amslFt(terrain.groundY(x, z));
     let destEnd = null; // stage 4: chosen destination runway end (null = return to the departure runway)
@@ -1053,7 +1127,10 @@
       landing.crashResetAt = 0;
       landing.rollout = false;
       landing.depMs = 0;
-      missilesLeft = 6;
+      weapons.reset();            // full stores, MASTER ARM safe
+      radar.drop();
+      ordFx.clear();
+      if (aircraft && aircraft.setStores) aircraft.setStores(weapons.loadout);
       landing.depIcao = activeEnd.icao;
       updateAPReadout();
     }
@@ -1473,8 +1550,15 @@
       if (e.code === 'KeyX') toggleAltHold();
       if (e.code === 'BracketLeft') adjustTargetAlt(-500);
       if (e.code === 'BracketRight') adjustTargetAlt(500);
-      if (e.code === 'Space' && currentAircraft === 'fighter') fireTracer();
-      if (e.code === 'KeyF') fireMissile();
+      // Fighter weapons: Space = gun (held), F = fire the selected missile / drop a bomb, T = radar lock (again = next,
+      // hold = unlock), Y = weapon select, K = master arm, U = flares, I = chaff
+      if (e.code === 'Space' && currentAircraft === 'fighter' && !e.repeat && !weapons.arm && !touchPlay) weaponMsg('MASTER ARM SAFE [K]');
+      if (e.code === 'KeyF' && !e.repeat) fireSelected();
+      if (e.code === 'KeyT' && !e.repeat) { tDownAt = performance.now(); tUnlocked = false; }
+      if (e.code === 'KeyY' && !e.repeat) window.cycleWeapon();
+      if (e.code === 'KeyK' && !e.repeat) window.toggleArm();
+      if (e.code === 'KeyU' && !e.repeat) window.skyforgeDecoy('FLARE');
+      if (e.code === 'KeyI' && !e.repeat) window.skyforgeDecoy('CHAFF');
       if (e.code === 'KeyJ') window.landNearest();
       if (e.code === 'KeyP') window.toggleTwoPlayer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
@@ -1484,7 +1568,11 @@
       if (e.code === 'KeyO' && currentAircraft === 'fighter') window.toggleLimiter();
       if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z, amslFt(state.pos.y));
     });
-    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+      if (e.code === 'KeyT' && tDownAt && !tUnlocked) lockTarget();   // a short press: lock / next target
+      if (e.code === 'KeyT') tDownAt = 0;
+    });
 
     // ==========================================
     // GAME CONTROLLER (right stick = pitch/roll, left stick = throttle/rudder; see src/core/gamepad.js)
@@ -1536,35 +1624,146 @@
           selectAircraft(FLEET_ORDER[(FLEET_ORDER.indexOf(currentAircraft) + step) % FLEET_ORDER.length]);
         }
       }
-      // Cross / A held: gun, 10 rounds per second (fighter only, like Space)
-      const now = performance.now();
-      if (pad.fire && currentAircraft === 'fighter' && now - lastGunShotMs > 100) {
-        lastGunShotMs = now;
-        fireTracer();
-      }
+      // Cross / A held: gun (fighter only, like Space)
+      padTrigger = !!pad.fire && currentAircraft === 'fighter';
     }
 
-    // Gun: 20 mm rounds from the phase 9 weapons system (gravity drop, hit detection on the range targets)
-    function fireTracer() {
-      const fwd = new THREE.Vector3(0, 0, -1).applyEuler(state.rot);
-      combat.weapons.fireCannon(state.pos.clone().addScaledVector(fwd, 8), state.vel, fwd);
-      audio.playCannon();
-    }
+    // ---------- Fighter weapons (phase 4): src/combat/fighterWeapons.js + src/combat/radar.js ----------
+    function weaponMsg(text, ms = 1800) { wpnMsg = { text, until: performance.now() + ms }; }
+    const WHY = { SAFE: 'MASTER ARM SAFE [K]', EMPTY: 'NONE LEFT', 'NO LOCK': 'NO RADAR LOCK [T]', 'NO TONE': 'NO IR TONE', GND: 'WEIGHT ON WHEELS' };
+    // Phones keep their two fire buttons: the weapons arm themselves in the air and the radar locks what is ahead
+    function autoArmTouch() { if (touchPlay && !weapons.arm && !state.onGround) { weapons.setArm(true, false); updateWeaponButtons(); } }
+    const ownTarget = { id: 'OWN', isOwn: true, get position() { return state.pos; }, get velocity() { return state.vel; }, get loadG() { return state.loadG || 1; } };
 
-    window.skyforgeGun = () => { if (currentAircraft === 'fighter') { audio.init(); fireTracer(); } };
-    window.skyforgeMissile = () => fireMissile();
-
-    // Missile: needs a radar lock (target inside the 30 degree cone, 15 km); 6 per sortie, reloaded on reset
-    function fireMissile() {
+    window.skyforgeGun = () => {   // button: a half-second burst
       if (currentAircraft !== 'fighter') return;
-      const lock = combatNow && combatNow.lockedTarget;
-      if (!lock) { flightMsg('NO LOCK - point the nose at a target (30 deg cone, 15 km)', '#facc15', 2500); return; }
-      if (missilesLeft <= 0) { flightMsg('WINCHESTER - no missiles left (reset at the runway to reload)', '#facc15', 3000); return; }
-      missilesLeft--;
-      const fwd = new THREE.Vector3(0, 0, -1).applyEuler(state.rot);
-      const rail = state.pos.clone().addScaledVector(fwd, 4).add(new THREE.Vector3(missilesLeft % 2 ? 2.5 : -2.5, -0.6, 0).applyEuler(state.rot));
-      combat.weapons.launchMissile(rail, state.vel, fwd, lock);
-      flightMsg(`FOX 2 - ${lock.id} | ${missilesLeft} LEFT`, '#f97316', 2500);
+      audio.init();
+      if (!weapons.arm && !touchPlay) weaponMsg('MASTER ARM SAFE [K]');
+      gunBurstUntil = performance.now() + 500;
+    };
+    window.skyforgeMissile = () => fireSelected();
+
+    // F: the selected store. Phones (no weapon select): radar missile on a lock, otherwise the heat seeker
+    function fireSelected() {
+      if (currentAircraft !== 'fighter') return;
+      audio.init();
+      autoArmTouch();
+      let kind = weapons.sel;
+      if (touchPlay && (kind === 'GUN' || kind === 'BOMB')) {
+        if (!radar.lock) radar.lockNext();
+        kind = radar.lock && radar.track && weapons.loadout.count('RDR') && radar.track.range > 2000 ? 'RDR' : 'IR';
+      }
+      if (kind === 'GUN') { weaponMsg('GUN: HOLD SPACE'); return; }
+      let r;
+      if (kind === 'BOMB') r = weapons.dropBomb(state);
+      else if (kind === 'RDR') r = weapons.launch('RDR', state, radar.lock && !radar.lock.isDestroyed ? radar.lock : null);
+      else {
+        let tgt = weapons.seeker.state === 'track' ? weapons.seeker.target : null;
+        if (!tgt && touchPlay && radar.track && !radar.track.ground && radar.track.range < 18000 && Math.hypot(radar.track.az, radar.track.el) < 30) tgt = radar.lock;
+        r = weapons.launch('IR', state, tgt);
+      }
+      if (!r.ok) weaponMsg(WHY[r.why] || r.why);
+      updateWeaponButtons();
+    }
+    function lockTarget() {
+      if (currentAircraft !== 'fighter') return;
+      audio.init();
+      if (radar.lockNext()) { audio.beep(1400, 0.07); audio.beep(1400, 0.07, 0.11); }
+      else weaponMsg('NO RADAR CONTACTS');
+    }
+    function unlockTarget() { if (radar.lock) { radar.drop(); audio.beep(520, 0.2); } }
+    // LOCK button: a click locks / steps to the next target, holding it unlocks (like T)
+    let lockBtnAt = 0;
+    window.skyforgeLockDown = () => { lockBtnAt = performance.now(); };
+    window.skyforgeLockUp = () => { if (!lockBtnAt) return; if (performance.now() - lockBtnAt > 600) unlockTarget(); else lockTarget(); lockBtnAt = 0; };
+    window.toggleArm = () => {
+      if (currentAircraft !== 'fighter') return;
+      audio.init();
+      const r = weapons.setArm(!weapons.arm, state.onGround);
+      if (!r.ok) weaponMsg(WHY[r.why]);
+      else audio.beep(weapons.arm ? 900 : 600, 0.06);
+      updateWeaponButtons();
+    };
+    window.cycleWeapon = () => {
+      if (currentAircraft !== 'fighter') return;
+      weapons.cycle();
+      updateWeaponButtons();
+    };
+    window.skyforgeDecoy = (kind) => {
+      if (currentAircraft !== 'fighter' || state.onGround) return;
+      audio.init();
+      const r = weapons.releaseDecoys(kind, state, ownTarget);
+      if (!r.ok) weaponMsg(kind === 'FLARE' ? 'NO FLARES' : 'NO CHAFF');
+    };
+    function updateWeaponButtons() {
+      const a = document.getElementById('btn-arm'), w = document.getElementById('btn-wpn');
+      if (a) { a.textContent = weapons.arm ? 'ARM [K]' : 'SAFE [K]'; a.classList.toggle('active', weapons.arm); }
+      if (w) w.textContent = `${WEAPON_NAME[weapons.sel]} [Y]`;
+    }
+    function handleWeaponEvent(e) {
+      if (e.type === 'launch') { audio.playLaunch(); flightMsg(`${e.kind === 'IR' ? 'FOX 2' : 'FOX 3'} - ${e.target.id} | ${weapons.loadout.count(e.kind)} LEFT`, '#f97316', 2500); }
+      else if (e.type === 'release') { audio.playRelease(); flightMsg(`PICKLE - BOMB AWAY | ${weapons.loadout.count('BOMB')} LEFT`, '#f97316', 2500); }
+      else if (e.type === 'pitbull') weaponMsg('PITBULL');
+      else if (e.type === 'impact' && e.target && e.target.health > 0) flightMsg(`HIT - ${e.target.id} DAMAGED`, '#fbbf24', 2500);
+      else if (e.type === 'miss') flightMsg(`MISSED${e.target && e.target.id ? ' - ' + e.target.id : ''}`, '#facc15', 2500);
+      else if (e.type === 'bombImpact') audio.playBlast(e.at.distanceTo(state.pos));
+      else if (e.type === 'decoy') audio.playPop();
+      else if (e.type === 'decoyed') weaponMsg(e.kind === 'IR' ? 'MSL DECOYED' : 'MSL CHAFFED');
+    }
+    // Radar picture + stores page in the corner of the 3D view (computer; the cockpit has them on its displays)
+    const radarMfd = document.createElement('canvas');
+    radarMfd.id = 'radar-mfd';
+    radarMfd.style.cssText = 'position:fixed;left:10px;z-index:10003;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.45);pointer-events:none;display:none;';
+    document.body.appendChild(radarMfd);
+    const radarCtx = radarMfd.getContext('2d');
+    let radarMfdAt = 0;
+    function radarPic() {
+      return { contacts: radar.contacts, track: radar.track, rangeM: RADAR.rangeM, gimbalDeg: RADAR.gimbalDeg,
+        headingDeg: ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360, nowMs: performance.now() };
+    }
+    function smsData() {
+      const L = weapons.loadout;
+      return { IR: L.IR, RDR: L.RDR, BOMB: L.BOMB, rounds: L.rounds, flares: L.flares, chaff: L.chaff, sel: weapons.sel, arm: weapons.arm };
+    }
+    function drawRadarMfd() {
+      const show = currentAircraft === 'fighter' && !touchPlay && !crashFx.active;
+      radarMfd.style.display = show ? 'block' : 'none';
+      if (!show || performance.now() - radarMfdAt < 100) return;
+      radarMfdAt = performance.now();
+      // sized to fit between the flight-path miniature (top left) and the bottom of the 3D view
+      const viewH = window.skyforgeViewH ? window.skyforgeViewH() : window.innerHeight;
+      const miniBottom = pathMini && !pathMini.isFull ? pathMini.canvas.getBoundingClientRect().bottom : 0;
+      const w = Math.round(Math.max(110, Math.min(200, window.innerWidth * 0.15, (viewH - miniBottom - 20) / 1.6))), sh = Math.round(w * 0.56), h = w + 4 + sh;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (radarMfd.width !== Math.round(w * dpr) || radarMfd.height !== Math.round(h * dpr)) {
+        radarMfd.width = Math.round(w * dpr); radarMfd.height = Math.round(h * dpr);
+        radarMfd.style.width = w + 'px'; radarMfd.style.height = h + 'px';
+      }
+      radarMfd.style.top = Math.max(0, viewH - h - 10) + 'px';
+      radarCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      radarCtx.clearRect(0, 0, w, h);
+      drawRadarPage(radarCtx, 0, 0, w, w, radarPic());
+      drawStoresPage(radarCtx, 0, w + 4, w, sh, smsData());
+    }
+    // Weapon symbols for the HUD (src/hud/weaponsHud.js); directions are from the viewer's eye
+    function weaponsHudData() {
+      if (currentAircraft !== 'fighter') return null;
+      const L = weapons.loadout, sel = weapons.sel, eye = camera.position;
+      const counts = { GUN: L.rounds, IR: L.count('IR'), RDR: L.count('RDR'), BOMB: L.count('BOMB'), FLARE: L.flares, CHAFF: L.chaff };
+      const tr = radar.track;
+      let lock = null, dlz = null, shoot = false, lcos = null, ccip = null;
+      if (tr && radar.lock) lock = Object.assign({}, tr, { dir: radar.lock.position.clone().sub(eye).normalize() });
+      const mslTgt = sel === 'IR' ? (weapons.seeker.state === 'track' ? weapons.seeker.target : null) : sel === 'RDR' ? radar.lock : null;
+      if (mslTgt && !mslTgt.isDestroyed) {
+        dlz = weapons.dlz(sel, state, mslTgt);
+        shoot = weapons.arm && counts[sel] > 0 && dlz.range > dlz.rmin && dlz.range < dlz.rmax;
+      }
+      if (sel === 'GUN' && tr && radar.lock && !tr.ground && tr.range < 1500) lcos = weapons.lcos(state, radar.lock, new THREE.Vector3());
+      if (sel === 'BOMB' && counts.BOMB > 0 && ccipNow.valid) ccip = { dir: ccipNow.point.clone().sub(eye).normalize(), valid: true, t: ccipNow.t };
+      const sk = weapons.seeker;
+      return { arm: weapons.arm, sel, counts, lock, dlz, shoot, lcos, ccip,
+        seeker: { state: sk.state, dir: sk.state === 'track' && sk.target ? sk.target.position.clone().sub(eye).normalize() : sk.dir },
+        msg: wpnMsg && performance.now() < wpnMsg.until ? wpnMsg.text : null };
     }
 
     // ==========================================
@@ -1653,7 +1852,7 @@
     }
 
     // ---- Fighter aerobatics (src/flight/maneuvers.js): autopilot, ghost guide, score ----
-    const fighterMassKg = () => profile.mass - Math.max(0, FIGHTER_FUEL_KG - cockpit.fuelKg);
+    const fighterMassKg = () => profile.mass - Math.max(0, FIGHTER_FUEL_KG - cockpit.fuelKg) + weapons.loadout.massKg();
     function startManeuver(n) {
       if (state.onGround || crashFx.active || !MANEUVERS[n]) return;
       // turns go towards the nearest runway (left when there is none)
@@ -1727,7 +1926,8 @@
         nav: lastNav, nowMs: performance.now(), dim: !!(visuals.state && visuals.state.time === 'dusk'),
         mnv: mnvMsg && performance.now() < mnvMsg.until ? mnvMsg : null,
         aoaBracket: gearDownNow() ? approachAoaDeg() : null,
-        ils: ilsNow
+        ils: ilsNow,
+        weapons: weaponsHudData()
       });
       if (rtb.active && rtb.phase !== 'rollout') hudData.nav = { turn: rtb.turnDeg, complete: false };
       return hudData;
@@ -1936,8 +2136,11 @@
           gentleRoll: !!state.navMode,
           hM: heightM,
           // fighter: weight falls as the fuel burns (profile mass = full tanks); the limiter switch
-          massKg: currentAircraft === 'fighter' ? profile.mass - Math.max(0, FIGHTER_FUEL_KG - cockpit.fuelKg) : undefined,
-          limiterOff: currentAircraft === 'fighter' && state.limiterOff
+          massKg: currentAircraft === 'fighter' ? fighterMassKg() : undefined,
+          limiterOff: currentAircraft === 'fighter' && state.limiterOff,
+          // stores under the wings: weight (in fighterMassKg), drag, slower roll with bombs; less of each as they are fired
+          dragAdd: currentAircraft === 'fighter' ? weapons.loadout.dragAdd() : 0,
+          rollScale: currentAircraft === 'fighter' ? weapons.loadout.rollScale() : 1
         }, profile, currentAircraft, dt);
         // Human limit: holding more g than the pilot tolerates narrows the view, then blacks it out.
         // The fighter's pilot has the time-based model (src/physics/pilotG.js), stepped below every frame.
@@ -2094,6 +2297,26 @@
       ilsNow = p8.ils;
       tmpFwd.set(0, 0, -1).applyEuler(state.rot);
       combatNow = combat.update(dt, state.pos, tmpFwd);
+      // Phase 4: radar, IR seeker, gun trigger, CCIP, then every round / missile / bomb / decoy in flight
+      if (currentAircraft === 'fighter') {
+        radar.update(dt, state, combat.targets.targets);
+        if (radar.events.includes('lost')) { weaponMsg('LOCK LOST'); audio.beep(520, 0.25); }
+        if (touchPlay && !radar.lock) {   // phones: lock what is ahead (30 deg, 15 km), as before
+          const c = radar.contacts.find((k) => k.off < 30 && k.range < 15000);
+          if (c) { radar.lock = c.t; radar.unseen = 0; }
+        }
+        if (keys['KeyT'] && tDownAt && !tUnlocked && performance.now() - tDownAt > 600) { tUnlocked = true; unlockTarget(); }
+        weapons.updateSeeker(state, radar.lock, combat.targets.targets);
+        const trigger = !!(keys['Space'] || padTrigger || performance.now() < gunBurstUntil) && !crashFx.active;
+        if (trigger) autoArmTouch();
+        weapons.gun(dt, state, trigger);
+        if (weapons.firing && performance.now() - lastGunShotMs > 70) { lastGunShotMs = performance.now(); audio.playCannon(); }
+        if (weapons.sel === 'BOMB' && weapons.arm && !state.onGround) weapons.ccip(state, ccipNow); else ccipNow.valid = false;
+        audio.setTone(weapons.seeker.state === 'track' ? 'ir' : weapons.seeker.state === 'search' ? 'growl' : 'off');
+        if (aircraft.setStores) aircraft.setStores(weapons.loadout);
+      } else if (radar.lock || weapons.seeker.state !== 'off') { radar.drop(); weapons.seeker.state = 'off'; audio.setTone('off'); }
+      for (const e of weapons.update(dt, state, radar.lock)) handleWeaponEvent(e);
+      ordFx.update(dt, renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)));
       // on the ground: runway left ahead, or how far the take-off runway is
       let groundLine = null;
       if (state.onGround) {
@@ -2102,7 +2325,7 @@
         if (rwEnd) groundLine = `ON RWY ${onRw.ident}: ${Math.max(0, Math.round(rwEnd.lengthM - onRw.distPast)).toLocaleString('en-IN')} M LEFT OF ${Math.round(rwEnd.lengthM).toLocaleString('en-IN')} M`;
         else groundLine = `T/O RWY ${activeEnd.ident} ${activeEnd.icao}: ${(Math.hypot(activeEnd.thrX - state.pos.x, activeEnd.thrZ - state.pos.z) / 1000).toFixed(1)} KM (${Math.round(activeEnd.lengthM).toLocaleString('en-IN')} M LONG)`;
       }
-      movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null,
+      movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? radar.lock : null,
         active: activeEnd, ground: groundLine, groundFt: amslFt(terrain.groundY(state.pos.x, state.pos.z)) };
       // during the return-to-base the map shows the nearest runway (where RTB is going), not the route planner's legs
       movingMap.draw(state, rtb.active ? null : navData, headingNow, performance.now());
@@ -2170,6 +2393,8 @@
         fpmAz: Math.atan2(bodyVel.x, Math.max(1, fwdSpeed)),
         fpmEl: Math.atan2(bodyVel.y, Math.max(1, fwdSpeed)),
         nav: navData,
+        radarPic: currentAircraft === 'fighter' ? radarPic() : null,
+        sms: currentAircraft === 'fighter' ? smsData() : null,
         ...fighterHudData()
       }, { pitch: pIn, roll: rIn, yaw: yIn }, performance.now(), cameraMode === 'cockpit');
 
@@ -2179,7 +2404,7 @@
 
         // Head shake from G-load above 1.5 G and transonic Mach buffet; head pushed down under positive G
         const buffet = Math.max(0, 1 - Math.abs(state.mach - 1.0) / 0.2) * (state.mach > 0.85 ? 1 : 0);
-        const shakeAmp = Math.max(0, gLoad - 1.5) * 0.0012 + buffet * 0.004;
+        const shakeAmp = Math.max(0, gLoad - 1.5) * 0.0012 + buffet * 0.004 + (weapons.firing ? 0.0025 : 0);
         headShake.x += ((Math.random() * 2 - 1) * shakeAmp - headShake.x) * 0.5;
         headShake.y += ((Math.random() * 2 - 1) * shakeAmp - headShake.y) * 0.5;
         const sag = Math.min(0.06, Math.max(0, gLoad - 1) * 0.008);
@@ -2242,6 +2467,7 @@
       pathMini.record(dt, state.pos, state.mach, state.loadG || 1, !state.onGround && !crashFx.active);
       pathMini.draw(performance.now(), dt, { pos: state.pos, vel: state.vel, groundY: terrain.groundY(state.pos.x, state.pos.z),
         ghost: flightPathFx.ghost || null, runway: rtb.active ? rtbEnd : null });
+      drawRadarMfd();
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();
@@ -2269,17 +2495,7 @@
         ctx.fillText(`P1-P2 ${sep < 1852 ? Math.round(sep) + ' M' : (sep / 1852).toFixed(1) + ' NM'}${sep > 6000 ? ' - STAY TOGETHER' : ''}`, W / 2, 22);
         ctx.textAlign = 'left';
       }
-      const lock = currentAircraft === 'fighter' && combatNow ? combatNow.lockedTarget : null;
-      if (lock) {
-        projV.copy(lock.position).project(camera);
-        if (projV.z < 1) {
-          const x = (projV.x * 0.5 + 0.5) * W, y = (-projV.y * 0.5 + 0.5) * H;
-          ctx.strokeStyle = '#f97316'; ctx.lineWidth = 2;
-          ctx.strokeRect(x - 16, y - 16, 32, 32);
-          ctx.fillStyle = '#f97316'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
-          ctx.fillText(`${lock.id} ${(lock.position.distanceTo(state.pos) / 1000).toFixed(1)} KM [F]`, x + 20, y - 6);
-        }
-      }
+      // (the radar lock box is drawn by the HUD itself since phase 4: src/hud/weaponsHud.js)
       if (ilsNow && ilsNow.inRange) {
         // Cross-pointer: vertical needle = localizer, horizontal = glide slope (centre = on the beam)
         // just under the moving map (the 3D view is shorter on a computer since the control bar sits below it)
