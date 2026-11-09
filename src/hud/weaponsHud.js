@@ -164,6 +164,31 @@ export function drawWeaponsFixed(ctx, L, w, d) {
     }
   }
 
+  // RWR (phase 5): a ring round the HUD centre, each emitter at its bearing (nose = top): S = SAM, F = fighter,
+  // M = missile coming. Track = HUD colour, lock = amber with a diamond, missile = red, flashing, and MISSILE in big letters
+  if (w.rwr && w.rwr.length) {
+    const R = Math.min(clip.w, clip.h) * 0.47, cx = L.W / 2, cy = L.midY, s = font * 0.75;
+    let launch = false;
+    ctx.save();
+    ctx.font = `bold ${Math.round(font * 0.95)}px monospace`;
+    ctx.textAlign = 'center';
+    for (const e of w.rwr) {
+      const a = e.az * DEG, x = cx + Math.sin(a) * R, y = cy - Math.cos(a) * R;
+      if (e.level === 'launch') { launch = true; if (!flash(d.nowMs, 4)) continue; }
+      ctx.strokeStyle = ctx.fillStyle = e.level === 'launch' ? '#ff3b30' : e.level === 'lock' ? '#fbbf24' : L.color;
+      ctx.fillText(e.kind, x, y + font * 0.35);
+      if (e.level !== 'track') {
+        ctx.beginPath(); ctx.moveTo(x, y - s * 1.5); ctx.lineTo(x + s * 1.5, y); ctx.lineTo(x, y + s * 1.5); ctx.lineTo(x - s * 1.5, y); ctx.closePath(); ctx.stroke();
+      }
+    }
+    if (launch && flash(d.nowMs, 3)) {
+      ctx.fillStyle = '#ff3b30';
+      ctx.font = `bold ${Math.round(font * 1.5)}px monospace`;
+      ctx.fillText('MISSILE', cx, clip.y + clip.h * 0.18);
+    }
+    ctx.restore();
+  }
+
   // Master arm + weapon selected + what is left (left, under the angle of attack)
   const lx = L.tapeLX, y1 = L.midY + L.tapeHalf + big * (L.compact ? 1.9 : 3.0);
   ctx.textAlign = 'center';
@@ -173,6 +198,12 @@ export function drawWeaponsFixed(ctx, L, w, d) {
   if (!L.compact) {
     ctx.fillText(`G${c.GUN} 9:${c.IR} 120:${c.RDR} B${c.BOMB}`, lx, y1 + font);
     ctx.fillText(`FLR ${c.FLARE} CHF ${c.CHAFF}`, lx, y1 + font * 2);
+  }
+  // damage (phase 5)
+  if (w.health !== undefined && w.health < 100) {
+    ctx.fillStyle = w.health < 40 ? '#ff3b30' : '#fbbf24';
+    const tags = (w.health < 60 ? ' ENG' : '') + (w.health < 40 ? ' CTRL' : '');
+    ctx.fillText(`DMG ${Math.round(100 - w.health)}%${tags}`, lx, y1 + font * (L.compact ? 1 : 3));
   }
   ctx.restore();
 }

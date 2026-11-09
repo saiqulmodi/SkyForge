@@ -542,6 +542,7 @@
         <button onclick="skyforgeMissile()" title="Fire the selected missile / drop a bomb">REL [F]</button>
         <button onclick="skyforgeDecoy('FLARE')" title="Flares, a pair">FLR [U]</button>
         <button onclick="skyforgeDecoy('CHAFF')" title="Chaff, a pair">CHF [I]</button>
+        <button id="btn-threats" class="active" onclick="toggleThreats()" title="SAM sites and enemy fighters engage you over the range">THREATS ON [H]</button>
       </div>
     </div>
 
@@ -638,6 +639,8 @@
     import { FighterWeapons, WEAPON_NAME } from './src/combat/fighterWeapons.js';
     import { OrdnanceFx } from './src/fx/ordnanceFx.js';
     import { drawRadarPage, drawStoresPage } from './src/hud/radarScope.js';
+    import { ThreatManager } from './src/combat/threats.js';
+    import { DamageModel } from './src/combat/damage.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -1005,6 +1008,24 @@
     let wpnMsg = null;            // short weapon cue on the HUD { text, until }
     let tDownAt = 0, tUnlocked = false, padTrigger = false, gunBurstUntil = 0;
     const ccipNow = { point: new THREE.Vector3(), t: 0, valid: false };
+    // Phase 5: the player's damage, and the targets that fight back (src/combat/threats.js), switched by [H]
+    const damage = new DamageModel();
+    let threatsOn = true;
+    let lastHitMsg = '';
+    // the player's aircraft as a target for enemy missiles (and the owner of the player's flares and chaff)
+    const ownTarget = {
+      id: 'OWN', isOwn: true, hitRadius: 8, damageScale: 0.3,
+      get position() { return state.pos; }, get velocity() { return state.vel; }, get loadG() { return state.loadG || 1; },
+      get health() { return damage.health; }, set health(v) { damage.health = Math.max(0, v); },
+      get isDestroyed() { return crashFx.active || !!landing.crashResetAt; }
+    };
+    const threats = new ThreatManager(scene, {
+      targets: combat.targets.targets, groundY: (x, z) => terrain.groundY(x, z), weapons, fx: ordFx, own: ownTarget,
+      isActive: () => threatsOn && currentAircraft === 'fighter' && !crashFx.active && !landing.crashResetAt
+    });
+    window.skyforgeThreats = threats;
+    const rwrTone = { next: 0, seen: new Set() };
+    let smokeAcc = 0;
     const navComputer = new NavComputer(); // route to the destination (default: back to the departure runway)
     navComputer.groundFtAt = (x, z) => amslFt(terrain.groundY(x, z));
     let destEnd = null; // stage 4: chosen destination runway end (null = return to the departure runway)
@@ -1129,6 +1150,8 @@
       landing.depMs = 0;
       weapons.reset();            // full stores, MASTER ARM safe
       radar.drop();
+      damage.reset();
+      threats.reset();
       ordFx.clear();
       if (aircraft && aircraft.setStores) aircraft.setStores(weapons.loadout);
       landing.depIcao = activeEnd.icao;
@@ -1559,6 +1582,7 @@
       if (e.code === 'KeyK' && !e.repeat) window.toggleArm();
       if (e.code === 'KeyU' && !e.repeat) window.skyforgeDecoy('FLARE');
       if (e.code === 'KeyI' && !e.repeat) window.skyforgeDecoy('CHAFF');
+      if (e.code === 'KeyH' && !e.repeat) window.toggleThreats();
       if (e.code === 'KeyJ') window.landNearest();
       if (e.code === 'KeyP') window.toggleTwoPlayer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
@@ -1633,7 +1657,6 @@
     const WHY = { SAFE: 'MASTER ARM SAFE [K]', EMPTY: 'NONE LEFT', 'NO LOCK': 'NO RADAR LOCK [T]', 'NO TONE': 'NO IR TONE', GND: 'WEIGHT ON WHEELS' };
     // Phones keep their two fire buttons: the weapons arm themselves in the air and the radar locks what is ahead
     function autoArmTouch() { if (touchPlay && !weapons.arm && !state.onGround) { weapons.setArm(true, false); updateWeaponButtons(); } }
-    const ownTarget = { id: 'OWN', isOwn: true, get position() { return state.pos; }, get velocity() { return state.vel; }, get loadG() { return state.loadG || 1; } };
 
     window.skyforgeGun = () => {   // button: a half-second burst
       if (currentAircraft !== 'fighter') return;
@@ -1695,12 +1718,20 @@
       const r = weapons.releaseDecoys(kind, state, ownTarget);
       if (!r.ok) weaponMsg(kind === 'FLARE' ? 'NO FLARES' : 'NO CHAFF');
     };
+    // [H]: SAMs and enemy fighters engage (on) or only fly their patrols (off)
+    window.toggleThreats = () => {
+      threatsOn = !threatsOn;
+      const b = document.getElementById('btn-threats');
+      if (b) { b.textContent = threatsOn ? 'THREATS ON [H]' : 'THREATS OFF [H]'; b.classList.toggle('active', threatsOn); }
+      flightMsg(threatsOn ? 'THREATS ON - SAM sites and enemy fighters will engage you over the range' : 'THREATS OFF - targets only', '#fbbf24', 3500);
+    };
     function updateWeaponButtons() {
       const a = document.getElementById('btn-arm'), w = document.getElementById('btn-wpn');
       if (a) { a.textContent = weapons.arm ? 'ARM [K]' : 'SAFE [K]'; a.classList.toggle('active', weapons.arm); }
       if (w) w.textContent = `${WEAPON_NAME[weapons.sel]} [Y]`;
     }
     function handleWeaponEvent(e) {
+      if (e.owner === 'enemy') { enemyWeaponEvent(e); return; }
       if (e.type === 'launch') { audio.playLaunch(); flightMsg(`${e.kind === 'IR' ? 'FOX 2' : 'FOX 3'} - ${e.target.id} | ${weapons.loadout.count(e.kind)} LEFT`, '#f97316', 2500); }
       else if (e.type === 'release') { audio.playRelease(); flightMsg(`PICKLE - BOMB AWAY | ${weapons.loadout.count('BOMB')} LEFT`, '#f97316', 2500); }
       else if (e.type === 'pitbull') weaponMsg('PITBULL');
@@ -1709,6 +1740,16 @@
       else if (e.type === 'bombImpact') audio.playBlast(e.at.distanceTo(state.pos));
       else if (e.type === 'decoy') audio.playPop();
       else if (e.type === 'decoyed') weaponMsg(e.kind === 'IR' ? 'MSL DECOYED' : 'MSL CHAFFED');
+    }
+    // enemy missiles: launch warning, hit (damage), defeated
+    function enemyWeaponEvent(e) {
+      const who = e.launcher ? e.launcher.id : 'ENEMY';
+      if (e.type === 'launch') flightMsg(`MISSILE LAUNCH - ${who} (${e.kind === 'SAM' ? 'radar: CHAFF [I]' : 'heat: FLARES [U]'} + BREAK TURN)`, '#ef4444', 4000);
+      else if (e.type === 'impact' && e.target === ownTarget) {
+        audio.playBlast(60);
+        flightMsg(`HIT BY ${who} - DAMAGE ${Math.round(100 - damage.health)}%${damage.engineHit ? ' - ENGINE' : ''}${damage.fire ? ' - FIRE, CONTROLS STIFF' : ''}`, '#ef4444', 4000);
+      } else if (e.type === 'miss') flightMsg(`MISSILE DEFEATED${e.decoyed ? ' - DECOYED' : ''}`, '#4ade80', 2500);
+      else if (e.type === 'decoyed') weaponMsg(e.kind === 'IR' ? 'FLARE DECOY' : 'CHAFF DECOY');
     }
     // Radar picture + stores page in the corner of the 3D view (computer; the cockpit has them on its displays)
     const radarMfd = document.createElement('canvas');
@@ -1761,7 +1802,7 @@
       if (sel === 'GUN' && tr && radar.lock && !tr.ground && tr.range < 1500) lcos = weapons.lcos(state, radar.lock, new THREE.Vector3());
       if (sel === 'BOMB' && counts.BOMB > 0 && ccipNow.valid) ccip = { dir: ccipNow.point.clone().sub(eye).normalize(), valid: true, t: ccipNow.t };
       const sk = weapons.seeker;
-      return { arm: weapons.arm, sel, counts, lock, dlz, shoot, lcos, ccip,
+      return { arm: weapons.arm, sel, counts, lock, dlz, shoot, lcos, ccip, rwr: threats.rwr, health: damage.health,
         seeker: { state: sk.state, dir: sk.state === 'track' && sk.target ? sk.target.position.clone().sub(eye).normalize() : sk.dir },
         msg: wpnMsg && performance.now() < wpnMsg.until ? wpnMsg.text : null };
     }
@@ -2040,6 +2081,8 @@
       const spool = (AIR[currentAircraft] && AIR[currentAircraft].spool) || 3.5;
       state.power += (state.throttle * 100 - state.power) * Math.min(1, spool * dt);
       state.isAfterburner = (profile.afterburnerThrust !== undefined && state.throttle > 0.70);
+      // phase 5: a damaged engine gives 60 % at most and no afterburner
+      if (currentAircraft === 'fighter' && damage.engineHit) { state.power = Math.min(state.power, damage.powerMax * 100); state.isAfterburner = false; }
 
       let pIn = (keys['KeyS'] ? 1 : 0) - (keys['KeyW'] ? 1 : 0);
       let rIn = (keys['KeyA'] ? -1 : 0) + (keys['KeyD'] ? 1 : 0);
@@ -2056,6 +2099,8 @@
         pIn = Math.max(-1, Math.min(1, pIn + touchStick.pitch));
         rIn = Math.max(-1, Math.min(1, rIn + touchStick.roll));
       }
+      // phase 5: battle damage stiffens the controls
+      if (currentAircraft === 'fighter' && damage.stick < 1) { pIn *= damage.stick; rIn *= damage.stick; yIn *= damage.stick; }
       // Pilot blacked out by sustained g: no control until the blood returns
       if (state.gStress >= 1) { pIn = 0; rIn = 0; yIn = 0; }
 
@@ -2315,7 +2360,27 @@
         audio.setTone(weapons.seeker.state === 'track' ? 'ir' : weapons.seeker.state === 'search' ? 'growl' : 'off');
         if (aircraft.setStores) aircraft.setStores(weapons.loadout);
       } else if (radar.lock || weapons.seeker.state !== 'off') { radar.drop(); weapons.seeker.state = 'off'; audio.setTone('off'); }
+      threats.update(dt, state);
       for (const e of weapons.update(dt, state, radar.lock)) handleWeaponEvent(e);
+      if (currentAircraft === 'fighter') {
+        // RWR tones: missile = fast high beeps, lock = steady beeps, a new radar looking at us = a double chirp
+        const rw = threats.rwr, now = performance.now();
+        const lvl = rw.some((r) => r.level === 'launch') ? 3 : rw.some((r) => r.level === 'lock') ? 2 : 0;
+        if (lvl && now > rwrTone.next) { audio.beep(lvl === 3 ? 1650 : 1000, lvl === 3 ? 0.06 : 0.12); rwrTone.next = now + (lvl === 3 ? 110 : 280); }
+        for (const r of rw) { const k = r.kind + r.level; if (r.level === 'track' && !rwrTone.seen.has(k)) { audio.beep(700, 0.06); audio.beep(900, 0.06, 0.09); } }
+        rwrTone.seen = new Set(rw.map((r) => r.kind + r.level));
+        // damage: smoke, then fire trailing the aircraft; lost at 0 %
+        if (damage.smoke && !crashFx.active && !state.onGround) {
+          smokeAcc += dt;
+          while (smokeAcc > 0.04) {
+            smokeAcc -= 0.04;
+            tmpVec.set(0, 0.2, 5).applyEuler(state.rot).add(state.pos);
+            ordFx.smoke.emit(tmpVec, null, 1.5, damage.fire ? 9 : 6, 4, 0.16, 0.15, 0.15, damage.fire ? 0.75 : 0.5, 0.3, 1.5);
+            if (damage.fire) ordFx.fire.emit(tmpVec, null, 2.2, 1, 0.25, 1.0, 0.5, 0.15, 0.95, 0);
+          }
+        }
+        if (damage.dead && !crashFx.active && !landing.crashResetAt) crash('SHOT DOWN');
+      }
       ordFx.update(dt, renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)));
       // on the ground: runway left ahead, or how far the take-off runway is
       let groundLine = null;

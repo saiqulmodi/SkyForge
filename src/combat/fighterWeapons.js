@@ -24,6 +24,9 @@ export const STORES = {
     gimbalDeg: 40, acqDeg: 2.5, slaveDeg: 30, life: 30, minSpeed: 220, len: 3.0, r: 0.065 },
   RDR: { n: 2, kg: 152, drag: 0.016, minR: 2000, maxR: 50000, burn: 6, thrust: 190, k0: 4.0e-5, maxG: 35, nav: 4, fuse: 8,
     gimbalDeg: 45, pitbull: 15000, life: 90, minSpeed: 250, len: 3.65, r: 0.09 },
+  // enemy surface-to-air missile (phase 5): radar guided from the launch, chaff can fool it
+  SAM: { n: 0, kg: 0, drag: 0, minR: 1500, maxR: 25000, burn: 5, thrust: 220, k0: 5.0e-5, maxG: 30, nav: 4, fuse: 10,
+    gimbalDeg: 75, pitbull: 1e9, life: 45, minSpeed: 200, len: 5.5, r: 0.2 },
   BOMB: { n: 4, kg: 241, drag: 0.045, k0: 5.6e-5, blastR: 45, damage: 600, len: 2.2, r: 0.137 },
   FLARE: { n: 30, burn: 4 },
   CHAFF: { n: 30, life: 6 }
@@ -199,7 +202,7 @@ export class FighterWeapons {
     this.seeker.state = 'off'; this.seeker.target = null;
     this.rl.fill(0);
     for (let i = 0; i < this.NR; i++) this.freeTracer(i);
-    this.missiles.forEach((m) => { m.mesh.visible = false; this.pool[m.kind].push(m.mesh); });
+    this.missiles.forEach((m) => { m.mesh.visible = false; (this.pool[m.kind] || (this.pool[m.kind] = [])).push(m.mesh); });
     this.bombs.forEach((b) => { b.mesh.visible = false; this.pool.BOMB.push(b.mesh); });
     this.missiles.length = 0; this.bombs.length = 0; this.flares.length = 0; this.chaffs.length = 0;
   }
@@ -303,6 +306,7 @@ export class FighterWeapons {
 
   damage(t, amount, how) {
     if (t.isDestroyed || t.health === undefined) return;
+    if (t.damageScale) amount *= t.damageScale;
     t.health -= amount;
     t.lastHitBy = how;
     if (t.onHit) t.onHit(amount, how);
@@ -348,8 +352,7 @@ export class FighterWeapons {
     if (!target) return { ok: false, why: kind === 'IR' ? 'NO TONE' : 'NO LOCK' };
     const st = this.loadout.take(kind);
     const S = STORES[kind];
-    const mesh = this.pool[kind].pop() || (() => { const g = makeStoreMesh(kind); g.add(makePlume(kind)); this.scene.add(g); return g; })();
-    mesh.visible = true;
+    const mesh = this.missileMesh(kind);
     const pos = this.stationWorld(new THREE.Vector3(), STATIONS[kind][st], own);
     _q.setFromEuler(own.rot);
     const vel = own.vel.clone().add(_a.set(0, -3, 0).applyQuaternion(_q));   // pushed clear of the rail / pylon
@@ -358,8 +361,27 @@ export class FighterWeapons {
     mesh.position.copy(pos);
     mesh.quaternion.copy(_q);
     this.missiles.push(m);
-    this.events.push({ type: 'launch', kind, target, station: st });
+    this.events.push({ type: 'launch', kind, target, station: st, owner: m.owner });
     return { ok: true, station: st, missile: m };
+  }
+  missileMesh(kind) {
+    const pool = this.pool[kind] || (this.pool[kind] = []);
+    const mesh = pool.pop() || (() => { const g = makeStoreMesh(kind); g.add(makePlume(kind)); this.scene.add(g); return g; })();
+    mesh.visible = true;
+    return mesh;
+  }
+  // Phase 5: a missile fired by an enemy (SAM site or enemy fighter) at target (usually the player's aircraft).
+  // pos, vel: launch point and velocity; launcher: the enemy object (for messages)
+  launchFrom(kind, pos, vel, target, launcher) {
+    const S = STORES[kind];
+    const mesh = this.missileMesh(kind);
+    const m = { kind, S, mesh, plume: mesh.children[mesh.children.length - 1], pos: pos.clone(), vel: vel.clone(), target, t: 0, alive: true,
+      active: kind !== 'RDR', lastFlare: this.flareSeq, lastChaff: this.flareSeq, decoyed: false, trailAcc: 0, owner: 'enemy', launcher, minDist: Infinity };
+    mesh.position.copy(m.pos);
+    mesh.quaternion.setFromUnitVectors(_z, _a.copy(vel).normalize());
+    this.missiles.push(m);
+    this.events.push({ type: 'launch', kind, target, owner: 'enemy', launcher });
+    return m;
   }
 
   // radarLock: the aircraft radar's locked target (datalink for the radar missile)
@@ -383,7 +405,7 @@ export class FighterWeapons {
       if (burning) m.plume.scale.set(1, 1, 0.8 + Math.random() * 0.5);
       // smoke trail every few metres while the motor burns
       m.trailAcc += m.vel.length() * dt;
-      if (this.fx && burning && m.trailAcc > 9) {
+      if (this.fx && burning && m.trailAcc > (m.kind === 'SAM' ? 7 : 9)) {
         const n = Math.min(6, Math.floor(m.trailAcc / 9));
         for (let k = 0; k < n; k++) {
           _b.copy(m.pos).addScaledVector(m.vel, -dt * (k / n));
@@ -443,10 +465,11 @@ export class FighterWeapons {
     m.vel.addScaledVector(_acc, dt);
     m.pos.addScaledVector(m.vel, dt);
     // proximity fuse on any target within 8 m during this step (the closest point of the step)
-    const list = tgt && !targets.includes(tgt) ? targets.concat([tgt]) : targets;
+    // enemy missiles only fuse on their own target; the player's never on the player
+    const list = m.owner === 'enemy' ? (tgt && !tgt.isDecoy ? [tgt] : []) : tgt && !targets.includes(tgt) ? targets.concat([tgt]) : targets;
     for (const t of list) {
       if (t.isDestroyed || t.burnt || t.isDecoy) continue;
-      if (m.t < 0.4 && m.owner === 'own' && t.isOwn) continue;
+      if (m.owner === 'own' && t.isOwn) continue;
       _c.set(px - t.position.x, py - t.position.y, pz - t.position.z);
       const d0 = _c.length();
       if (d0 > 400) continue;
@@ -457,7 +480,7 @@ export class FighterWeapons {
         this.damage(t, 250 * Math.max(0.4, 1 - d / 16), m.kind);
         if (this.fx) this.fx.airBurst(m.pos, 1.2);
         m.alive = false;
-        this.events.push({ type: 'impact', kind: m.kind, target: t });
+        this.events.push({ type: 'impact', kind: m.kind, target: t, owner: m.owner, launcher: m.launcher });
         return;
       }
     }
@@ -468,7 +491,7 @@ export class FighterWeapons {
       if (this.fx) { if (m.pos.y <= gy) this.fx.groundBlast(_c.set(m.pos.x, gy, m.pos.z)); else this.fx.airBurst(m.pos, 0.6); }
       if (m.pos.y <= gy) this.blast(_c.set(m.pos.x, gy, m.pos.z), 20, 200, m.kind);
       m.alive = false;
-      this.events.push({ type: 'miss', kind: m.kind, target: m.target, minDist: m.minDist });
+      this.events.push({ type: 'miss', kind: m.kind, target: m.target, minDist: m.minDist, owner: m.owner, launcher: m.launcher, decoyed: m.decoyed });
     }
   }
 
@@ -500,7 +523,7 @@ export class FighterWeapons {
       if (Math.random() < Math.min(0.9, p)) {
         m.target = d;
         m.decoyed = true;
-        this.events.push({ type: 'decoyed', kind: m.kind, by: d.kind, owner: tgt });
+        this.events.push({ type: 'decoyed', kind: m.kind, by: d.kind, target: tgt, owner: m.owner });
         return;
       }
     }
@@ -580,18 +603,20 @@ export class FighterWeapons {
 
   // ---------- decoys ----------
   // owner: the object the decoys protect (the aircraft's target record); a pair per press
-  releaseDecoys(kind, own, owner) {
+  // fromLoadout false: an enemy's decoys (they do not come out of the player's stores)
+  releaseDecoys(kind, own, owner, fromLoadout = true) {
     const left = kind === 'FLARE' ? this.loadout.flares : this.loadout.chaff;
-    if (left <= 0) return { ok: false, why: 'EMPTY' };
+    if (fromLoadout && left <= 0) return { ok: false, why: 'EMPTY' };
     _q.setFromEuler(own.rot);
     const id = ++this.flareSeq;          // the pair counts as one decoy for a missile's seeker
     for (const st of STATIONS.DECOY) {
       const pos = this.stationWorld(new THREE.Vector3(), st, own);
       const vel = own.vel.clone().add(_a.set(Math.sign(st[0]) * 9, -12, 6).applyQuaternion(_q));
       const d = { kind, id, pos, position: pos, vel, velocity: vel, age: 0, owner, isDecoy: true, burnt: false, puff: 0 };
-      if (kind === 'FLARE') { this.flares.push(d); this.loadout.flares--; } else { this.chaffs.push(d); this.loadout.chaff--; if (this.fx) this.fx.chaffBurst(pos, vel); }
+      if (kind === 'FLARE') { this.flares.push(d); if (fromLoadout) this.loadout.flares--; }
+      else { this.chaffs.push(d); if (fromLoadout) this.loadout.chaff--; if (this.fx) this.fx.chaffBurst(pos, vel); }
     }
-    this.events.push({ type: 'decoy', kind });
+    if (fromLoadout) this.events.push({ type: 'decoy', kind });
     return { ok: true };
   }
   stepDecoys(dt) {
