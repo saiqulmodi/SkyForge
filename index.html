@@ -519,6 +519,9 @@
           <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
           <button onclick="startApproach()">APPROACH [L]</button>
           <button id="btn-sound" onclick="toggleSound()" class="active">SOUND</button>
+          <button id="btn-flyby" class="no-touch" onclick="toggleFlyby()" title="Fly-by camera: the aircraft passes a fixed camera">FLY-BY [,]</button>
+          <button id="btn-mslcam" class="no-touch" onclick="toggleMissileCam()" title="Follow your next missile to its target">MSL CAM [.]</button>
+          <button class="no-touch" onclick="startReplay()" title="Replay the last 20 s">REPLAY [/]</button>
       </div>
     </div>
 
@@ -1026,6 +1029,13 @@
     window.skyforgeThreats = threats;
     const rwrTone = { next: 0, seen: new Set() };
     let smokeAcc = 0;
+    // phase 6 cameras: fly-by [,], missile camera [.], replay of the last 20 s [/] (declared early: the start-up reset uses them)
+    let extCam = null;                 // null | 'flyby' | 'missile'
+    const flyby = { pt: new THREE.Vector3(), set: false };
+    const mslCam = { holdUntil: 0, last: new THREE.Vector3(), lastDir: new THREE.Vector3(0, 0, -1), on: false };
+    const REC_N = 600;                 // 20 s at 30 a second
+    const rec = { buf: new Float32Array(REC_N * 7), head: 0, count: 0, acc: 0 };
+    const replay = { active: false, t: 0, n: 0, start: 0, snapPos: new THREE.Vector3(), snapRot: new THREE.Euler(0, 0, 0, 'YXZ') };
     const navComputer = new NavComputer(); // route to the destination (default: back to the departure runway)
     navComputer.groundFtAt = (x, z) => amslFt(terrain.groundY(x, z));
     let destEnd = null; // stage 4: chosen destination runway end (null = return to the departure runway)
@@ -1152,6 +1162,8 @@
       radar.drop();
       damage.reset();
       threats.reset();
+      rec.count = 0;
+      if (replay.active) replay.active = false;
       ordFx.clear();
       if (aircraft && aircraft.setStores) aircraft.setStores(weapons.loadout);
       landing.depIcao = activeEnd.icao;
@@ -1583,6 +1595,9 @@
       if (e.code === 'KeyU' && !e.repeat) window.skyforgeDecoy('FLARE');
       if (e.code === 'KeyI' && !e.repeat) window.skyforgeDecoy('CHAFF');
       if (e.code === 'KeyH' && !e.repeat) window.toggleThreats();
+      if (e.code === 'Comma' && !e.repeat) window.toggleFlyby();
+      if (e.code === 'Period' && !e.repeat) window.toggleMissileCam();
+      if (e.code === 'Slash' && !e.repeat) { e.preventDefault(); window.startReplay(); }
       if (e.code === 'KeyJ') window.landNearest();
       if (e.code === 'KeyP') window.toggleTwoPlayer();
       if (e.code === 'KeyR' && aircraft.toggleRamp) aircraft.toggleRamp(state.ias); // cargo ramp, below 150 kt
@@ -1631,9 +1646,40 @@
       padNote._t = setTimeout(() => { padNote.style.display = 'none'; }, 4000);
     });
 
+    // Fighter in the air (phase 6): weapons and manoeuvres on the pad (see src/core/gamepad.js)
+    let padLockAt = 0;
+    function fighterPadLayer(pad) {
+      const air = currentAircraft === 'fighter' && !state.onGround && !crashFx.active;
+      if (!air || !pad.held) return false;
+      const autoArm = () => { if (!weapons.arm) { weapons.setArm(true, false); updateWeaponButtons(); } };
+      if (pad.held[4] && pad.held[5]) {           // L1 + R1 held: manoeuvres
+        const MAP = { 12: 1, 13: 2, 14: 3, 15: 4, 2: 5, 3: 6, 1: 7, 0: 8 };
+        for (const b of pad.edges) {
+          audio.init();
+          if (MAP[b]) startManeuver(MAP[b]);
+          else if (b === 9) window.startRTB();
+        }
+        padTrigger = false;
+        return true;                               // the buttons' normal jobs are off while the chord is held
+      }
+      for (const b of pad.edges) {
+        audio.init();
+        if (b === 1) { autoArm(); fireSelected(); }
+        else if (b === 10) window.cycleWeapon();
+        else if (b === 11) padLockAt = performance.now();
+        else if (b === 14) window.skyforgeDecoy('FLARE');
+        else if (b === 15) window.skyforgeDecoy('CHAFF');
+      }
+      if (pad.ups.includes(11) && padLockAt) { if (performance.now() - padLockAt > 600) unlockTarget(); else lockTarget(); padLockAt = 0; }
+      if (pad.fire) autoArm();
+      return false;
+    }
     function handlePadActions(pad) {
+      if (fighterPadLayer(pad)) return;
+      const fighterAir = currentAircraft === 'fighter' && !state.onGround;
       for (const action of pad.actions) {
         audio.init();
+        if (fighterAir && (action === 'prevAircraft' || action === 'nextAircraft' || action === 'ramp')) continue;   // D-pad / Circle = decoys / weapons
         if (action === 'view') window.toggleCameraView();
         else if (action === 'autopilot') toggleAP();
         else if (action === 'altHold') toggleAltHold();
@@ -1652,6 +1698,107 @@
       padTrigger = !!pad.fire && currentAircraft === 'fighter';
     }
 
+    // ---------- Cameras (phase 6): fly-by [,], missile camera [.], replay of the last 20 s [/] ----------
+    const camQ = new THREE.Quaternion();
+    function setCamButtons() {
+      const f = document.getElementById('btn-flyby'), m = document.getElementById('btn-mslcam');
+      if (f) f.classList.toggle('active', extCam === 'flyby');
+      if (m) m.classList.toggle('active', extCam === 'missile');
+    }
+    window.toggleFlyby = () => { extCam = extCam === 'flyby' ? null : 'flyby'; flyby.set = false; setCamButtons(); };
+    window.toggleMissileCam = () => {
+      extCam = extCam === 'missile' ? null : 'missile';
+      if (extCam === 'missile') flightMsg('MISSILE CAMERA - follows your next missile to the end, then back to the aircraft', '#38bdf8', 3500);
+      setCamButtons();
+    };
+    function recordFlight(dt) {
+      rec.acc += dt;
+      if (rec.acc < 1 / 30 || crashFx.active) return;
+      rec.acc = 0;
+      const i = rec.head * 7, b = rec.buf;
+      if (rec.count) {   // a jump (new start, approach) begins a new recording
+        const j = ((rec.head - 1 + REC_N) % REC_N) * 7;
+        if (Math.hypot(b[j] - state.pos.x, b[j + 2] - state.pos.z) > 2000) rec.count = 0;
+      }
+      camQ.setFromEuler(state.rot);
+      b[i] = state.pos.x; b[i + 1] = state.pos.y; b[i + 2] = state.pos.z;
+      b[i + 3] = camQ.x; b[i + 4] = camQ.y; b[i + 5] = camQ.z; b[i + 6] = camQ.w;
+      rec.head = (rec.head + 1) % REC_N;
+      rec.count = Math.min(REC_N, rec.count + 1);
+    }
+    window.startReplay = () => {
+      if (replay.active) { endReplay(); return; }
+      if (rec.count < 60 || crashFx.active) { flightMsg('REPLAY - fly a little first (it shows the last 20 s)', '#fbbf24', 2500); return; }
+      replay.active = true; replay.t = 0; replay.n = rec.count; replay.start = (rec.head - rec.count + REC_N) % REC_N;
+      replay.snapPos.copy(state.pos); replay.snapRot.copy(state.rot);
+      flightMsg(`REPLAY - last ${Math.round(rec.count / 30)} s (press / again to stop)`, '#38bdf8', 3000);
+    };
+    function endReplay() {
+      replay.active = false;
+      state.pos.copy(replay.snapPos);
+      state.rot.copy(replay.snapRot);
+      fleetContainer.rotation.copy(state.rot);
+    }
+    // replay frame: the game is paused; the aircraft flies its recorded path, the camera circles it
+    function stepReplay(dt) {
+      replay.t += dt;
+      const k = Math.min(replay.n - 1, Math.floor(replay.t * 30));
+      const i = ((replay.start + k) % REC_N) * 7, b = rec.buf;
+      state.pos.set(b[i], b[i + 1], b[i + 2]);
+      fleetContainer.quaternion.set(b[i + 3], b[i + 4], b[i + 5], b[i + 6]);
+      const a = replay.t * 0.35;
+      camera.layers.set(0); camera.layers.enable(LAYER_EXTERIOR);
+      camera.up.set(0, 1, 0);
+      camera.position.set(state.pos.x + Math.sin(a) * 34, state.pos.y + 9, state.pos.z + Math.cos(a) * 34);
+      const gy = terrain.groundY(camera.position.x, camera.position.z) + 3;
+      if (camera.position.y < gy) camera.position.y = gy;
+      camera.lookAt(state.pos);
+      terrain.update(state.pos.x, state.pos.z);
+      visuals.update(state.pos);
+      visuals.render();
+      ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+      ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(`REPLAY  -${((replay.n - 1 - k) / 30).toFixed(1)} s   [/] stop`, hudCanvas.width / 2, 40);
+      ctx.textAlign = 'left';
+      if (k >= replay.n - 1) endReplay();
+    }
+    // fly-by and missile camera, after the normal camera has been placed; true when one of them is showing
+    function applyExtCam() {
+      if (extCam === 'flyby') {
+        const away = flyby.pt.distanceTo(state.pos);
+        const behind = tmpVec.copy(flyby.pt).sub(state.pos).dot(state.vel) < 0;
+        if (!flyby.set || away > 700 || (behind && away > 250)) {
+          const v = state.vel.length() > 20 ? state.vel : tmpVec.set(0, 0, -30).applyEuler(state.rot);
+          flyby.pt.copy(state.pos).addScaledVector(v, 2.2).add(tmpUp.set(-v.z, 0, v.x).normalize().multiplyScalar(30));
+          flyby.pt.y += 10;
+          flyby.pt.y = Math.max(flyby.pt.y, terrain.groundY(flyby.pt.x, flyby.pt.z) + 4);
+          flyby.set = true;
+        }
+        camera.layers.set(0); camera.layers.enable(LAYER_EXTERIOR);
+        camera.position.copy(flyby.pt);
+        camera.up.set(0, 1, 0);
+        camera.lookAt(state.pos);
+        return true;
+      }
+      if (extCam === 'missile') {
+        let m = null;
+        for (const x of weapons.missiles) if (x.owner === 'own') m = x;
+        if (m) {
+          mslCam.lastDir.copy(m.vel).normalize();
+          mslCam.last.copy(m.pos);
+          mslCam.holdUntil = performance.now() + 2000;   // watch the hit for 2 s
+          camera.position.copy(m.pos).addScaledVector(mslCam.lastDir, -16);
+          camera.position.y += 3;
+        } else if (performance.now() > mslCam.holdUntil) return false;
+        camera.layers.set(0); camera.layers.enable(LAYER_EXTERIOR);
+        camera.up.set(0, 1, 0);
+        camera.lookAt(tmpVec.copy(mslCam.last).addScaledVector(mslCam.lastDir, m ? 40 : 0));
+        return true;
+      }
+      return false;
+    }
+    let extCamShowing = false;
+
     // ---------- Fighter weapons (phase 4): src/combat/fighterWeapons.js + src/combat/radar.js ----------
     function weaponMsg(text, ms = 1800) { wpnMsg = { text, until: performance.now() + ms }; }
     const WHY = { SAFE: 'MASTER ARM SAFE [K]', EMPTY: 'NONE LEFT', 'NO LOCK': 'NO RADAR LOCK [T]', 'NO TONE': 'NO IR TONE', GND: 'WEIGHT ON WHEELS' };
@@ -1665,6 +1812,14 @@
       gunBurstUntil = performance.now() + 500;
     };
     window.skyforgeMissile = () => fireSelected();
+    // phone bomb button (phase 6): drops the next bomb whatever weapon is selected
+    window.skyforgeBomb = () => {
+      if (currentAircraft !== 'fighter') return;
+      audio.init();
+      autoArmTouch();
+      const r = weapons.dropBomb(state);
+      if (!r.ok) weaponMsg(WHY[r.why] || r.why);
+    };
 
     // F: the selected store. Phones (no weapon select): radar missile on a lock, otherwise the heat seeker
     function fireSelected() {
@@ -1800,7 +1955,7 @@
         shoot = weapons.arm && counts[sel] > 0 && dlz.range > dlz.rmin && dlz.range < dlz.rmax;
       }
       if (sel === 'GUN' && tr && radar.lock && !tr.ground && tr.range < 1500) lcos = weapons.lcos(state, radar.lock, new THREE.Vector3());
-      if (sel === 'BOMB' && counts.BOMB > 0 && ccipNow.valid) ccip = { dir: ccipNow.point.clone().sub(eye).normalize(), valid: true, t: ccipNow.t };
+      if ((sel === 'BOMB' || touchPlay) && counts.BOMB > 0 && ccipNow.valid) ccip = { dir: ccipNow.point.clone().sub(eye).normalize(), valid: true, t: ccipNow.t };
       const sk = weapons.seeker;
       return { arm: weapons.arm, sel, counts, lock, dlz, shoot, lcos, ccip, rwr: threats.rwr, health: damage.health,
         seeker: { state: sk.state, dir: sk.state === 'track' && sk.target ? sk.target.position.clone().sub(eye).normalize() : sk.dir },
@@ -1988,6 +2143,7 @@
     function drawAvionics() {
       ctx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
       if (cameraMode === 'cockpit') return; // cockpit view uses the collimated HUD on the combiner glass
+      if (extCamShowing) return;            // fly-by / missile camera: the picture only
       if (currentAircraft === 'fighter' && !twoPlayer && !crashFx.active) {
         const key = `${hudCanvas.width}x${hudCanvas.height}${touchPlay}`;
         if (key !== hudLayoutKey) { hudLayout = screenLayout(hudCanvas.width, hudCanvas.height, touchPlay, '#46ff8c'); hudLayoutKey = key; }
@@ -2057,11 +2213,14 @@
     const headShake = { x: 0, y: 0 };
     const chaseOffsetSmooth = new THREE.Vector3(); // chase camera offset (world axes), eased for rotation only
 
+    const fps = { n: 0, at: 0 };        // window.skyforgeFps: frames a second (console check)
     function animate() {
       requestAnimationFrame(animate);
       const frameNow = performance.now();
       dt = lastFrameMs ? Math.max(1 / 240, Math.min(1 / 20, (frameNow - lastFrameMs) / 1000)) : 1 / 60;
       lastFrameMs = frameNow;
+      fps.n++; if (frameNow - fps.at > 1000) { window.skyforgeFps = Math.round(fps.n * 1000 / (frameNow - fps.at)); fps.n = 0; fps.at = frameNow; }
+      if (replay.active) { stepReplay(dt); return; }   // phase 6: the game waits while the replay plays
       velBefore.copy(state.vel);
 
       if (keys['ShiftLeft'] || keys['ShiftRight']) state.throttle = Math.min(1.0, state.throttle + 0.4 * dt);
@@ -2356,7 +2515,7 @@
         if (trigger) autoArmTouch();
         weapons.gun(dt, state, trigger);
         if (weapons.firing && performance.now() - lastGunShotMs > 70) { lastGunShotMs = performance.now(); audio.playCannon(); }
-        if (weapons.sel === 'BOMB' && weapons.arm && !state.onGround) weapons.ccip(state, ccipNow); else ccipNow.valid = false;
+        if ((weapons.sel === 'BOMB' || (touchPlay && weapons.loadout.count('BOMB'))) && (weapons.arm || touchPlay) && !state.onGround) weapons.ccip(state, ccipNow); else ccipNow.valid = false;
         audio.setTone(weapons.seeker.state === 'track' ? 'ir' : weapons.seeker.state === 'search' ? 'growl' : 'off');
         if (aircraft.setStores) aircraft.setStores(weapons.loadout);
       } else if (radar.lock || weapons.seeker.state !== 'off') { radar.drop(); weapons.seeker.state = 'off'; audio.setTone('off'); }
@@ -2511,6 +2670,7 @@
         camera.up.set(0, 1, 0);
       }
 
+      extCamShowing = !twoPlayer && !crashFx.active && extCam ? applyExtCam() : false;
       if (twoPlayer) {
         wingman.update(dt, gamepad2.poll(), state);
         camera.layers.set(0);
@@ -2533,6 +2693,7 @@
       pathMini.draw(performance.now(), dt, { pos: state.pos, vel: state.vel, groundY: terrain.groundY(state.pos.x, state.pos.z),
         ghost: flightPathFx.ghost || null, runway: rtb.active ? rtbEnd : null });
       drawRadarMfd();
+      recordFlight(dt);
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();

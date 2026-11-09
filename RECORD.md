@@ -11,6 +11,22 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 ## Done
 
+### Round 4f, 09-Nov-2026: fighter upgrade, phase 6 (cameras, gamepad, phone, polish)
+- Cameras (computer buttons in CAMERA & VIEW): [,] fly-by (a fixed camera beside the path, moved on as the aircraft passes), [.] missile camera (follows your next missile, holds 2 s on the hit, then back), [/] replay of the last 20 s (game paused, camera circles the aircraft along its recorded path, [/] again stops; the aircraft comes back exactly where it was). The HUD hides in fly-by / missile camera.
+- Gamepad, fighter in the air: Circle = fire selected store, L3 = weapon select, R3 = radar lock (hold = unlock), D-pad left/right = flares/chaff, Cross = gun; hold L1+R1: D-pad = manoeuvres 1-4, Square/Triangle/Circle/Cross = 5-8, Options = RTB. Master arm comes on by itself with the pad (as on phones). On the ground the old pad map is unchanged.
+- Phone (symbols only, fighter): fire column is now 2 wide: missile, gun, bomb, flares + chaff, radar lock (tap = lock / next, hold = unlock), return to runway; the CCIP pipper shows on phones while bombs are left.
+- Sound: RWR tones (phase 5), lock beeps, launch / release / flare / blast (phase 4) join the engine spool, afterburner roar, wind with speed, sonic boom and g-strain already there.
+- window.skyforgeFps gives frames a second (console). Browser checks: fly-by, missile camera, replay and its return, no console errors.
+
+### Round 4e, 09-Nov-2026: fighter upgrade, phase 5 (targets that fight back)
+- src/combat/threats.js: TGT-AIR-03 weaving drone (3 g), TGT-AIR-04 jinking drone (5 g) that breaks and drops flares against missiles, BANDIT-1/2 enemy fighters (patrol, then lead-pursuit turn fight at 7 g, 2 heat seekers each, flares + break against your missiles), SAM-SITE-01 radar SAM (tracks 20 km, locks 12 km, fires 3 s after lock, 2 ready, reload 20 s; RADAR-SITE-02 search radar feeds it, without it 10 km), SAM-SITE-03 heat-seeking SAM (no warning until launch, inside 5 km below 3,000 m), TRUCK-1..3 convoy. All join the range list: radar sees them, every weapon hits them, they come back after 45 s.
+- Enemy missiles fly the same missile physics (FighterWeapons.launchFrom); your flares fool heat seekers, chaff + flying across the line of sight fools radar SAMs.
+- RWR on the HUD (both views): ring round the centre, S / F / M at their bearing, lock = amber diamond, missile = red flashing + big MISSILE; tones (new radar chirp, lock beeps, fast launch beeps); launch / hit / defeated messages.
+- Damage (src/combat/damage.js): a hit takes 30-75 %; below 85 % smoke, below 60 % engine (60 % power, no afterburner), below 40 % fire and half control authority, 0 % = shot down (eject, crash scene). HUD DMG line.
+- [H] / THREATS button: threats on (default) or off (targets only); threats only engage the fighter in the air.
+- Tests (node tools/test_threats.mjs, 8 checks): bandit hits a straight-flying player 12/12; flares + 6 g break: 1 hit from 18 missiles; SAM quiet at 24 km and below 100 m, fires 3.0 s after lock; beaming with chaff 0 hits from 61 SAMs, doing nothing 19/20 hit; search radar sets SAM range; damage steps; flaring jinker hit 2/16 vs weaver 16/16; IR SAM envelope. Browser: bandit locked and fired, HUD MISSILE + RWR shown, a flare decoyed it; damage smoke/fire/ENG CTRL shown.
+- Can be better: enemy fighters use simple point-mass flight (not the full flight model); no enemy guns.
+
 ### Round 4d, 09-Nov-2026: fighter upgrade, phase 4 (radar, all weapons, CCIP)
 - Radar (src/combat/radar.js): 40 km, 60 deg either side of the nose, hills hide targets. T = lock the contact nearest the nose, T again = next, hold T = unlock; lock lost 2 s after the target leaves the radar's view. Track: range, closure, target speed, heading, aspect; lock tone.
 - Weapons (src/combat/fighterWeapons.js), real numbers: gun 511 rounds at 6,000/min, 1,036 m/s + own speed, drag + gravity, tracer every 5th round; 2 heat seekers (growl, high tone on lock, 0.8-18 km, 2.5 s motor to Mach 2.6, PN N=4, 35 g, 8 m fuse, flares can decoy them); 2 radar missiles (radar lock, 2-50 km, datalink then own radar at 15 km, chaff can fool them); 4 Mk-82 bombs; 30 flares + 30 chaff in pairs.
