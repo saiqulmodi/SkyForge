@@ -33,7 +33,7 @@ export const MANEUVERS = {
 };
 
 // Body axes and flight angles of a game state (state.rot is the airframe's Euler 'YXZ')
-function frame(s, f) {
+export function frame(s, f) {
   f.q.setFromEuler(s.rot);
   f.nose.set(0, 0, -1).applyQuaternion(f.q);
   f.up.set(0, 1, 0).applyQuaternion(f.q);
@@ -45,10 +45,10 @@ function frame(s, f) {
   f.az = Math.atan2(-s.vel.x, -s.vel.z);            // direction of travel on the map (game yaw convention)
   return f;
 }
-const newFrame = () => ({ q: new THREE.Quaternion(), nose: new THREE.Vector3(), up: new THREE.Vector3(), right: new THREE.Vector3(), vHat: new THREE.Vector3() });
+export const newFrame = () => ({ q: new THREE.Quaternion(), nose: new THREE.Vector3(), up: new THREE.Vector3(), right: new THREE.Vector3(), vHat: new THREE.Vector3() });
 
 // Stick position that asks the fighter's flight computer for gWant (inverse of the stick law in flight.js)
-function stickFor(gWant, s, f) {
+export function stickFor(gWant, s, f) {
   const air = AIR.fighter;
   const cosBank = Math.cos(s.rot.z);
   const hold = cosBank >= 0.34 ? Math.cos(f.gamma) / cosBank : 1 + (Math.cos(f.gamma) / 0.34 - 1) * clamp((cosBank + 0.1) / 0.44, 0, 1);

@@ -11,6 +11,14 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 ## Done
 
+### Round 4c, 09-Nov-2026: fighter upgrade, phase 3 (return to base, overhead break, landing) + controls bar + flight-path miniature
+- [9] (cockpit: G then 9) or the RTB button: the fighter turns back to the nearest runway and flies the overhead break pattern itself (src/flight/returnToBase.js): RTB (to 12 km out on the centre line, above the hills on the way), INITIAL (1,500 ft, 350 kt), BREAK (60 deg bank, idle), DOWNWIND (200 kt, gear down), BASE (descending half circle), FINAL (localizer + 3 deg glide slope, the fighter's approach speed of 160 kt), FLARE, ROLLOUT (power off, brakes, nose-wheel steering on the centre line). Already lined up on final: it carries straight on. Press 9 again or move the stick to take over.
+- HUD: phase and runway on top (e.g. FINAL VOBL 09L), steering diamond to the RTB's next heading, ILS needles (localizer, glide slope) on final, AoA approach bracket by the flight path marker when the gear is down. The map shows the nearest runway (not the route planner's legs) during RTB.
+- Computer (user, 09-Nov-2026): every button, tab and switch is shown in a bar BELOW the 3D view, so nothing covers the picture; new FIGHTER group (manoeuvres 1-8, RTB, limiter, gun, missile). Phones keep their own layout.
+- Miniature 3D flight-path display, top left under the badge (src/hud/pathMini.js): last 3 minutes coloured like the ribbons, drop lines to the ground, the manoeuvre ghost dashed, the landing runway during RTB; it turns slowly. Click it: full 3D view for 5 s, then small again.
+- ILS box moved under the moving map (the shorter 3D view had put it behind the map).
+- Tests: 6 RTB landings from different start points, all on the centre line (within 2 m), 400-420 m past the threshold, 222-236 fpm, 153 kt, pitch under 11 deg; 35 checks in all pass. In the browser: RTB from a short final -> FINAL -> FLARE -> touchdown -> ROLLOUT with brakes, landing rated by the game (2 stars at the browser's ~1.5 FPS), full-screen miniature returned after 5 s, no console errors.
+
 ### Round 4b, 09-Nov-2026: fighter upgrade, phase 2 (aerobatics, ghost guide, flight-path visuals)
 - Eight manoeuvres flown by an autopilot that moves the stick, rudder and throttle through the same flight physics (src/flight/maneuvers.js). Chase view: number keys 1-8. Cockpit view (numbers turn the head there): G, then the number.
   1 Loop, 2 Immelmann, 3 Split-S (needs 1,500 m), 4 Break 180 (turns towards the nearest runway), 5 Aileron roll, 6 Barrel roll (true helix), 7 Cuban eight, 8 Wingover.
@@ -72,7 +80,7 @@ Kept up to date with each round of work. Newest round first in "Done".
 
 Most useful first. "Needs the user" means it cannot be finished from this computer alone.
 
-0. **Feel of the g effects and the full-screen HUD at real frame rate (needs the user).** The test browser runs at about 1.5 FPS, so the g build-up was checked by the test clock, not by eye.
+0. **Feel at real frame rate (needs the user): g effects, full-screen HUD, aerobatics, the RTB flare (3 stars in the 120 Hz test, 2 stars in the 1.5 FPS test browser).** The test browser runs at about 1.5 FPS, so the g build-up was checked by the test clock, not by eye.
 1. **Real phone test (needs the user).** All tests ran at phone sizes on a computer. Frame rate and feel on a real phone are unmeasured.
 2. **Easier landing on a phone.** A flare with a touch stick may be hard. Options: a landing aid that eases the sink rate near the runway, or a gentler stick near centre.
 3. **Goals to fly for.** Only landing stars so far. Could add a daily route, target runs on the weapons range, and fastest-lap rings.

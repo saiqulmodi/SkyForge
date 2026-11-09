@@ -410,6 +410,32 @@
     setTimeout(place, 300); setInterval(place, 1500);
   });
 </script>
+<style id="deck-full-bar">
+  /* 09-Nov-2026 (user): on a computer every button, tab and switch is shown, in a bar below the 3D view, so the
+     picture is never covered. Phones keep their own layout (picture buttons, two tabs, touch controls). */
+  html body.deck-full #control-deck {
+    position: fixed !important; left: 0 !important; right: 0 !important; bottom: 0 !important; top: auto !important;
+    display: flex !important; flex-wrap: wrap !important; justify-content: center !important; align-items: center !important;
+    gap: 3px 6px !important; padding: 4px 6px !important; overflow: visible !important; max-width: none !important;
+    background: #070d17 !important; border-top: 1px solid #1e3a5f !important; z-index: 10001 !important;
+  }
+  html body.deck-full #control-deck > .panel-box, html body.deck-full #control-deck > .panel-box:nth-child(n+3) {
+    display: flex !important; flex-wrap: wrap !important; align-items: center !important; gap: 3px !important;
+    padding: 2px 5px !important; border-radius: 6px !important; background: rgba(15, 23, 42, 0.95) !important;
+  }
+  html body.deck-full #control-deck .panel-box b { display: inline-block !important; font-size: 9px !important; margin: 0 2px 0 0 !important; color: #38bdf8 !important; }
+  html body.deck-full #control-deck .btn-grid { display: flex !important; flex-wrap: wrap !important; gap: 3px !important; margin: 0 !important; }
+  html body.deck-full #control-deck button { font-size: 10px !important; padding: 2px 6px !important; height: 20px !important; line-height: 14px !important; }
+  html body.deck-full #control-deck select { min-width: 0 !important; max-width: 190px; font-size: 10px !important; height: 20px; margin: 0 !important; display: inline-block !important; }
+  html body.deck-full #control-deck #ap-readout { font-size: 10px; margin: 0 0 0 4px !important; }
+  html body.deck-full #control-deck > .panel-box > div:not(.btn-grid) { margin: 0 !important; }
+  html body.deck-full .deck-arrow { display: none !important; }
+</style>
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) document.body.classList.add('deck-full');
+  });
+</script>
 <style>
   .deck-pop-btn { border: 1px solid #38bdf8 !important; background: rgba(2,132,199,0.25) !important; color: #e2e8f0 !important; }
   .deck-pop-btn .t { color: #38bdf8; margin-right: 4px; }
@@ -425,6 +451,8 @@
   window.addEventListener('DOMContentLoaded', () => {
     const deck = document.getElementById('control-deck');
     if (!deck) return;
+    // phones only (09-Nov-2026): on a computer every button stays in view in the full control bar
+    if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
     let openPop = null;
     const closeAll = () => { if (openPop) { openPop.classList.remove('open'); openPop = null; } };
     document.addEventListener('pointerdown', (e) => { if (openPop && !openPop.contains(e.target) && !e.target.closest('.deck-pop-btn')) closeAll(); });
@@ -491,6 +519,24 @@
           <button onclick="lookCockpit('center')">RESET HEAD [5]</button>
           <button onclick="startApproach()">APPROACH [L]</button>
           <button id="btn-sound" onclick="toggleSound()" class="active">SOUND</button>
+      </div>
+    </div>
+
+    <div class="panel-box" id="panel-fighter">
+      <b>FIGHTER</b>
+      <div class="btn-grid">
+        <button onclick="skyforgeManeuver(1)" title="Loop">LOOP [1]</button>
+        <button onclick="skyforgeManeuver(2)" title="Immelmann">IMMEL [2]</button>
+        <button onclick="skyforgeManeuver(3)" title="Split-S">SPLIT-S [3]</button>
+        <button onclick="skyforgeManeuver(4)" title="Break turn 180">BREAK [4]</button>
+        <button onclick="skyforgeManeuver(5)" title="Aileron roll">A-ROLL [5]</button>
+        <button onclick="skyforgeManeuver(6)" title="Barrel roll">B-ROLL [6]</button>
+        <button onclick="skyforgeManeuver(7)" title="Cuban eight">CUBAN 8 [7]</button>
+        <button onclick="skyforgeManeuver(8)" title="Wingover">W-OVER [8]</button>
+        <button id="btn-rtb" onclick="startRTB()" title="Return to the nearest runway: overhead break and landing">RTB [9]</button>
+        <button id="btn-lim" onclick="toggleLimiter()" title="Angle-of-attack limiter">LIM ON [O]</button>
+        <button onclick="skyforgeGun()" title="Gun">GUN [SPACE]</button>
+        <button onclick="skyforgeMissile()" title="Missile (needs a radar lock)">MSL [F]</button>
       </div>
     </div>
 
@@ -581,6 +627,8 @@
     import { drawFighterHud, screenLayout } from './src/hud/fighterHud.js';
     import { ManeuverPilot, ManeuverScore, predictPath, MANEUVERS } from './src/flight/maneuvers.js';
     import { FlightPathFx } from './src/fx/flightPath.js';
+    import { ReturnPilot } from './src/flight/returnToBase.js';
+    import { PathMini } from './src/hud/pathMini.js';
     // Altitude above sea level in feet (world y = 0 is VOBL at 915 m / 3,002 ft)
     const amslFt = (y) => (y - SEA_LEVEL_Y) * 3.28084;
 
@@ -934,6 +982,9 @@
     let mnvMsg = null;          // { text, stars, until } shown on the HUD
     let ghostClearAt = 0;
     let flightPathFx = null;    // src/fx/flightPath.js, made with the other effects below
+    const rtb = new ReturnPilot(); // phase 3: return to the nearest runway, overhead break, landing (key 9)
+    let rtbEnd = null;
+    let pathMini = null;          // src/hud/pathMini.js
     window.skyforgeState = state; // console check: position, speed, throttle
 
     // FleetManager owns the 4 airframes (src/aircraft/*). Camera layers: exterior on LAYER_EXTERIOR
@@ -981,6 +1032,7 @@
       state.loadG = 1;
       state.maxG = 1;
       state.limiterOff = false;
+      { const b = document.getElementById('btn-lim'); if (b) { b.textContent = 'LIM ON [O]'; b.classList.add('active'); } }
       state.spin = 0;
       pilotG = newPilotG();
       stopManeuver();
@@ -1402,10 +1454,10 @@
       }
       // Fighter aerobatics (1-8): in the chase view the number key flies it; in the cockpit the numbers turn the head,
       // so there press G first, then the number (within 1.5 s)
-      const mnvKey = /^(Digit|Numpad)([1-8])$/.exec(e.code);
+      const mnvKey = /^(Digit|Numpad)([1-9])$/.exec(e.code);
       const gArmed = performance.now() <= gPrefixUntil;
       if (e.code === 'KeyG' && currentAircraft === 'fighter') gPrefixUntil = performance.now() + 1500;
-      if (mnvKey && currentAircraft === 'fighter' && (cameraMode !== 'cockpit' || gArmed)) { gPrefixUntil = 0; startManeuver(+mnvKey[2]); }
+      if (mnvKey && currentAircraft === 'fighter' && (cameraMode !== 'cockpit' || gArmed)) { gPrefixUntil = 0; if (mnvKey[2] === '9') window.startRTB(); else startManeuver(+mnvKey[2]); }
       else if (cameraMode === 'cockpit') {
         if (e.code === 'Digit1' || e.code === 'Numpad1') window.lookCockpit('left45');
         if (e.code === 'Digit2' || e.code === 'Numpad2') window.lookCockpit('down');
@@ -1429,7 +1481,7 @@
       if (e.code === 'KeyL') window.startApproach(); // 3 degree final to the active runway
       if (e.code === 'KeyM') movingMap.toggleSize();
       // Fighter: angle-of-attack limiter off / on (off = the wing can stall and spin; the HUD shows LIM OFF)
-      if (e.code === 'KeyO' && currentAircraft === 'fighter') state.limiterOff = !state.limiterOff;
+      if (e.code === 'KeyO' && currentAircraft === 'fighter') window.toggleLimiter();
       if (e.code === 'KeyN' && !state.onGround) navComputer.replan(state.pos.x, state.pos.z, amslFt(state.pos.y));
     });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -1499,6 +1551,9 @@
       audio.playCannon();
     }
 
+    window.skyforgeGun = () => { if (currentAircraft === 'fighter') { audio.init(); fireTracer(); } };
+    window.skyforgeMissile = () => fireMissile();
+
     // Missile: needs a radar lock (target inside the 30 degree cone, 15 km); 6 per sortie, reloaded on reset
     function fireMissile() {
       if (currentAircraft !== 'fighter') return;
@@ -1518,14 +1573,22 @@
     const hudCanvas = document.getElementById('hud-canvas');
     const ctx = hudCanvas.getContext('2d');
 
+    // Computer: the control bar sits under the 3D view, which gets the rest of the window
+    const deckEl = document.getElementById('control-deck');
+    window.skyforgeViewH = () => window.innerHeight - (document.body.classList.contains('deck-full') && deckEl ? deckEl.offsetHeight : 0);
     function resize() {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      camera.aspect = window.innerWidth / window.innerHeight;
+      const h = window.skyforgeViewH();
+      renderer.setSize(window.innerWidth, h);
+      camera.aspect = window.innerWidth / h;
       camera.updateProjectionMatrix();
       hudCanvas.width = window.innerWidth;
-      hudCanvas.height = window.innerHeight;
+      hudCanvas.height = h;
+      hudCanvas.style.height = h + 'px';
+      if (window.skyforgeVisuals && visuals.state) visuals.setQuality(visuals.state.quality, false);
+      if (typeof pathMini !== 'undefined' && pathMini) pathMini.place(h);
     }
     window.addEventListener('resize', resize);
+    if (deckEl && window.ResizeObserver) new ResizeObserver(() => resize()).observe(deckEl);
     resize();
 
     initTouchControls(movingMap); // phones and tablets only: on-screen flight buttons, clean screen
@@ -1603,6 +1666,7 @@
       const env = { ias: state.ias, aglM: heightAboveGroundFt() * 0.3048, turnDir, onGround: state.onGround };
       const res = mnv.start(n, state, env);
       if (!res.ok) { mnvMsg = { text: `${MANEUVERS[n].name}  ${res.why}`, until: performance.now() + 2500 }; return; }
+      if (rtb.active) { rtb.stop(); updateRtbButton(); }
       state.apMaster = false; state.altHold = false; state.navMode = false;
       updateAPReadout();
       const ghost = predictPath(n, state, Object.assign({}, env, { profile, massKg: fighterMassKg(), hMOf: (y) => amslFt(y) * 0.3048, step: stepFixedWingAir }));
@@ -1612,11 +1676,36 @@
       mnvMsg = { text: MANEUVERS[n].name, until: Infinity };
     }
     function stopManeuver() {
+      if (rtb.active) { rtb.stop(); updateRtbButton(); }
       mnv.stop();
       mnvScore.stop();
       if (flightPathFx) flightPathFx.setGhost(null);
       mnvMsg = null;
     }
+    // Phase 3: back to the nearest runway (the map's nearest runway end) and land: overhead break pattern
+    function updateRtbButton() { const b = document.getElementById('btn-rtb'); if (b) b.classList.toggle('active', rtb.active); }
+    window.startRTB = () => {
+      if (currentAircraft !== 'fighter' || crashFx.active) return;
+      if (rtb.active) { rtb.stop(); mnvMsg = { text: 'RTB OFF', until: performance.now() + 2000 }; updateRtbButton(); return; }
+      if (state.onGround) { mnvMsg = { text: 'RTB  GND', until: performance.now() + 2000 }; return; }
+      const nr = movingMap.nearest;
+      if (!nr || !nr.end) return;
+      mnv.stop(); mnvScore.stop(); if (flightPathFx) flightPathFx.setGhost(null);
+      window.landNearest();                  // destination = that runway: route, map and ILS follow it
+      rtbEnd = nr.end;
+      rtb.start(rtbEnd, state, { profile, groundHeight: profile.groundHeight, hMOf: (y) => amslFt(y) * 0.3048,
+        groundAt: (x, z) => terrain.groundY(x, z), side: -1 });
+      state.apMaster = false; state.altHold = false; state.navMode = false;
+      updateAPReadout(); updateRtbButton();
+      mnvMsg = { text: `RTB  ${rtbEnd.icao} ${rtbEnd.ident}`, until: Infinity };
+    };
+    window.toggleLimiter = () => {
+      if (currentAircraft !== 'fighter') return;
+      state.limiterOff = !state.limiterOff;
+      const b = document.getElementById('btn-lim');
+      if (b) { b.textContent = state.limiterOff ? 'LIM OFF [O]' : 'LIM ON [O]'; b.classList.toggle('active', !state.limiterOff); }
+    };
+
     function maneuverResult(r) {
       if (!r) return;
       mnvMsg = { text: `${r.name}  ${r.score}`, stars: r.stars, until: performance.now() + 5000 };
@@ -1628,7 +1717,7 @@
     function fighterHudData() {
       if (currentAircraft !== 'fighter') { hudData.fighterHud = false; return hudData; }
       const altFt = heightAboveGroundFt();
-      return Object.assign(hudData, {
+      Object.assign(hudData, {
         fighterHud: true, q: bodyQuat, vel: state.vel, yaw: state.rot.y, bankDeg: -state.rot.z * 180 / Math.PI,
         headingDeg: ((90 - state.rot.y * 180 / Math.PI) % 360 + 360) % 360,
         iasKt: state.ias, mach: state.mach, altFt, radarAlt: altFt < 5000, vsiFpm: state.vel.y * 196.85,
@@ -1636,9 +1725,16 @@
         isAfterburner: state.isAfterburner, limiterOff: state.limiterOff, stalled: !state.onGround && !!state.stalled,
         overspeed: !!state.overspeed, fuelPct: cockpit.fuelKg / FIGHTER_FUEL_KG * 100, onGround: state.onGround,
         nav: lastNav, nowMs: performance.now(), dim: !!(visuals.state && visuals.state.time === 'dusk'),
-        mnv: mnvMsg && performance.now() < mnvMsg.until ? mnvMsg : null
+        mnv: mnvMsg && performance.now() < mnvMsg.until ? mnvMsg : null,
+        aoaBracket: gearDownNow() ? approachAoaDeg() : null,
+        ils: ilsNow
       });
+      if (rtb.active && rtb.phase !== 'rollout') hudData.nav = { turn: rtb.turnDeg, complete: false };
+      return hudData;
     }
+    function gearDownNow() { return !state.onGround && (heightAboveGroundFt() < 300 || (rtb.active && rtb.gearDown)); }
+    // angle of attack at the aircraft's approach speed (the middle of the HUD bracket)
+    function approachAoaDeg() { return trimAlpha(profile, profile.approachKt / 1.94384, amslFt(state.pos.y) * 0.3048) * 180 / Math.PI; }
     // Chase view: world direction -> screen pixel through the camera (null when behind it)
     const hudProjV = new THREE.Vector3();
     const projectToScreen = (dir) => {
@@ -1695,6 +1791,7 @@
     let lastFrameMs = 0;
     let lastMach = 0;
     const fighterFx = new FighterFx(fleetContainer, scene, LAYER_EXTERIOR);
+    pathMini = new PathMini();                 // small 3D flight-path picture, top left; click = full screen for 5 s
     flightPathFx = new FlightPathFx(scene);   // wing-tip ribbons, future path, ghost rings, contrails
     window.skyforgeManeuver = (n) => startManeuver(n);   // console check
     window.skyforgeManeuverState = () => ({ msg: mnvMsg, flying: mnv.flying, scoring: mnvScore.on });   // console check
@@ -1777,6 +1874,22 @@
         }
       }
 
+      // Return-to-base autopilot: moving the stick or rudder hands the aircraft back
+      if (rtb.active && currentAircraft === 'fighter') {
+        if (Math.abs(pIn) > 0.3 || Math.abs(rIn) > 0.3 || Math.abs(yIn) > 0.3) {
+          rtb.stop(); updateRtbButton();
+          mnvMsg = { text: 'RTB  MANUAL', until: performance.now() + 2500 };
+        } else {
+          const u = rtb.update(state, dt, state.onGround);
+          if (u) {
+            pIn = u.pitch; rIn = u.roll; yIn = u.yaw;
+            state.throttle = u.throttle;
+            if (mnvMsg) mnvMsg.text = `${rtb.label}  ${rtbEnd.icao} ${rtbEnd.ident}`;
+          }
+          if (!rtb.active) { updateRtbButton(); mnvMsg = { text: `${rtbEnd.icao} ${rtbEnd.ident}  STOPPED`, until: performance.now() + 4000 }; }
+        }
+      }
+
       if (state.navMode && (!state.apMaster || state.onGround || profile.rotorcraft || !lastNav || lastNav.complete)) {
         state.navMode = false;
         updateAPReadout();
@@ -1805,7 +1918,7 @@
       state.ias = trueSpeed * Math.sqrt(air.sigma) * 1.94384;               // what the airspeed indicator reads
       state.mach = trueSpeed / air.soundMs;
 
-      const braking = !!(keys['KeyB'] || (pad && pad.brake));
+      const braking = !!(keys['KeyB'] || (pad && pad.brake) || (rtb.active && rtb.brakes));
       const terrainY = terrain.groundY(state.pos.x, state.pos.z); // real ground under the aircraft (0 at VOBL)
 
       if (profile.rotorcraft) {
@@ -1991,7 +2104,8 @@
       }
       movingMap.extras = { wind, ils: ilsNow, traffic: p8.traffic, targets: combatNow.targets, lock: currentAircraft === 'fighter' ? combatNow.lockedTarget : null,
         active: activeEnd, ground: groundLine, groundFt: amslFt(terrain.groundY(state.pos.x, state.pos.z)) };
-      movingMap.draw(state, navData, headingNow, performance.now());
+      // during the return-to-base the map shows the nearest runway (where RTB is going), not the route planner's legs
+      movingMap.draw(state, rtb.active ? null : navData, headingNow, performance.now());
       updateTrackCue(navData, headingNow, terrain.groundY(state.pos.x, state.pos.z));
 
       fleetContainer.position.copy(state.pos);
@@ -2029,7 +2143,7 @@
         power: state.power,
         isAfterburner: state.isAfterburner,
         iasKt: state.ias,
-        gearDown: state.onGround || heightAboveGroundFt() < 300
+        gearDown: state.onGround || heightAboveGroundFt() < 300 || (rtb.active && rtb.gearDown)
       });
       state.hAmslM = heightM;
       fighterFx.update(dt, state, currentAircraft === 'fighter');
@@ -2125,6 +2239,9 @@
       if (currentAircraft === 'fighter' && mnvScore.on) maneuverResult(mnvScore.update(state.pos, state.vel, dt));
       if (ghostClearAt && performance.now() > ghostClearAt) { ghostClearAt = 0; flightPathFx.setGhost(null); }
       flightPathFx.update(dt, state, currentAircraft === 'fighter' && !crashFx.active, heightM, camera.position, mnvScore.on ? mnvScore.i : -1);
+      pathMini.record(dt, state.pos, state.mach, state.loadG || 1, !state.onGround && !crashFx.active);
+      pathMini.draw(performance.now(), dt, { pos: state.pos, vel: state.vel, groundY: terrain.groundY(state.pos.x, state.pos.z),
+        ghost: flightPathFx.ghost || null, runway: rtb.active ? rtbEnd : null });
       visuals.update(state.pos);
       visuals.render();
       drawAvionics();
@@ -2165,7 +2282,9 @@
       }
       if (ilsNow && ilsNow.inRange) {
         // Cross-pointer: vertical needle = localizer, horizontal = glide slope (centre = on the beam)
-        const r = 46, cx = W - r - 24, cy = H - r - 150;
+        // just under the moving map (the 3D view is shorter on a computer since the control bar sits below it)
+        const mapRect = movingMap.canvas.getBoundingClientRect();
+        const r = 46, cx = W - r - 24, cy = Math.min(H - r - 12, mapRect.bottom + r + 30);
         ctx.fillStyle = 'rgba(6,12,18,0.7)'; ctx.fillRect(cx - r - 8, cy - r - 18, 2 * r + 16, 2 * r + 26);
         ctx.strokeStyle = 'rgba(226,232,240,0.6)'; ctx.lineWidth = 1;
         for (let k = -2; k <= 2; k++) {

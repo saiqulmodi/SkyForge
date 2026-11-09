@@ -322,10 +322,12 @@ export async function createVisuals({ renderer, scene, camera, sunLight, hemiLig
       return false;
     }
   }
+  // height of the 3D view: the window minus the control bar under it on a computer (index.html sets skyforgeViewH)
+  function viewH() { return window.skyforgeViewH ? window.skyforgeViewH() : window.innerHeight; }
   window.addEventListener('resize', () => {
     if (composer) {
       composer.setPixelRatio(renderer.getPixelRatio());
-      composer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, viewH());
     }
   });
 
@@ -388,7 +390,7 @@ export async function createVisuals({ renderer, scene, camera, sunLight, hemiLig
       try { localStorage.setItem('skyforge.quality', tier); } catch (e) { /* storage blocked */ }
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.ratio));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(window.innerWidth, viewH());
     const shadowChange = renderer.shadowMap.enabled !== q.shadows;
     renderer.shadowMap.enabled = q.shadows;
     sunLight.castShadow = q.shadows;
@@ -400,7 +402,7 @@ export async function createVisuals({ renderer, scene, camera, sunLight, hemiLig
     st.bloom = q.bloom && await ensureComposer();
     if (composer) {
       composer.setPixelRatio(renderer.getPixelRatio());
-      composer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, viewH());
     }
     document.querySelectorAll('[data-gfx]').forEach((b) => b.classList.toggle('active', b.dataset.gfx === tier));
   }

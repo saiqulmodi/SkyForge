@@ -7,7 +7,8 @@
 //   L: layout { W, H, clip: {x, y, w, h}, font, lw, color, compact, tapeLX, tapeRX, tapeHalf, midY, headY, bankY, bankR, outline }
 //   d: flight data { q (body quaternion), vel (world m/s), yaw (rot.y), bankDeg, headingDeg, iasKt, mach, altFt, radarAlt,
 //      vsiFpm, gLoad, maxG, aoaDeg, power, isAfterburner, limiterOff, stalled, overspeed, fuelPct, onGround, nav, nowMs,
-//      mnv: { text, stars } manoeuvre line or null }
+//      mnv: { text, stars } manoeuvre line or null, aoaBracket: approach AoA in deg (gear down) or null,
+//      ils: { inRange, locDeviation, gsDeviation } }
 //   proj(worldDir) -> [x, y] on the display, or null when the direction is behind the viewer
 import * as THREE from 'three';
 
@@ -121,6 +122,15 @@ export function drawFighterHud(ctx, L, d, proj) {
       ctx.moveTo(x, y - r); ctx.lineTo(x, y - 1.9 * r);
       if (held) { ctx.moveTo(x - r * 0.7, y - r * 0.7); ctx.lineTo(x + r * 0.7, y + r * 0.7); ctx.moveTo(x + r * 0.7, y - r * 0.7); ctx.lineTo(x - r * 0.7, y + r * 0.7); }
       ctx.stroke();
+      // AoA approach bracket (gear down, in the air): the flight path marker sits in the middle of the bracket at the
+      // approach angle of attack; marker high in the bracket = too slow, low = too fast (2 deg either side)
+      if (d.aoaBracket !== null && d.aoaBracket !== undefined && !d.onGround) {
+        const k = font * 0.55, cy = y + (d.aoaDeg - d.aoaBracket) * k, bx = x - 3.3 * r;
+        ctx.beginPath();
+        ctx.moveTo(bx + r * 0.6, cy - 2 * k); ctx.lineTo(bx, cy - 2 * k); ctx.lineTo(bx, cy + 2 * k); ctx.lineTo(bx + r * 0.6, cy + 2 * k);
+        ctx.moveTo(bx, cy); ctx.lineTo(bx + r * 0.4, cy);
+        ctx.stroke();
+      }
     }
   }
 
@@ -137,6 +147,18 @@ export function drawFighterHud(ctx, L, d, proj) {
       held ? ctx.fill() : ctx.stroke();
       ctx.strokeStyle = ctx.fillStyle = col;
     }
+  }
+  // ILS needles on the HUD (on final): vertical = localizer, horizontal = glide slope; centred = on the beam
+  if (d.ils && d.ils.inRange && !L.compact) {
+    const cx = clip.x + clip.w / 2, cy = clip.y + clip.h / 2, span = Math.min(clip.w, clip.h) * 0.22;
+    ctx.save();
+    ctx.setLineDash([font * 0.5, font * 0.35]);
+    ctx.beginPath();
+    const lx = cx + d.ils.locDeviation * span, gy = cy - d.ils.gsDeviation * span;
+    ctx.moveTo(lx, cy - span); ctx.lineTo(lx, cy + span);
+    ctx.moveTo(cx - span, gy); ctx.lineTo(cx + span, gy);
+    ctx.stroke();
+    ctx.restore();
   }
   ctx.restore();
 

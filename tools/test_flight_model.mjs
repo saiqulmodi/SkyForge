@@ -206,5 +206,53 @@ function fly(s, sec, inputFn, hM, opts = {}) {
   check('entry check: SPLIT-S refused below 1,500 m', !r.ok && r.why === 'ALT LOW', r.why || 'started');
 }
 
+// 9. Return to base (src/flight/returnToBase.js): overhead break to a touchdown, from 5 different start points.
+//    Flat ground at y = 0, runway 3,000 m from the origin towards -z. The test stops at wheel contact
+//    (the game's own ground code then does the landing rating, roll-out and brakes).
+{
+  const { ReturnPilot } = await import(new URL('src/flight/returnToBase.js', ROOT).href);
+  const end = { thrX: 0, thrZ: 0, dirX: 0, dirZ: -1, y: 0, lengthM: 3000, icao: 'TEST', ident: '36' };
+  const GH = 1.2;
+  const starts = [
+    { name: 'ahead, flying away', x: 0, z: -15000, yaw: 0, kt: 400, y: 2000 },
+    { name: 'behind, flying away', x: 0, z: 20000, yaw: Math.PI, kt: 420, y: 3000 },
+    { name: 'abeam right, crossing', x: 12000, z: -3000, yaw: Math.PI / 2, kt: 380, y: 1500 },
+    { name: 'far left, heading north', x: -25000, z: 8000, yaw: 0, kt: 450, y: 4000 },
+    { name: 'low and slow, near the field', x: 3000, z: 4000, yaw: -Math.PI / 2, kt: 300, y: 800 },
+    { name: 'already on a 3 deg final 8 km out', x: 0, z: 8000, yaw: 0, kt: 165, y: 8300 * Math.tan(3 * Math.PI / 180) + 1.2, final: true }
+  ];
+  for (const st of starts) {
+    const v = st.kt * KT;
+    const s = { pos: new THREE.Vector3(st.x, st.y, st.z), vel: new THREE.Vector3(-Math.sin(st.yaw) * v, 0, -Math.cos(st.yaw) * v),
+      rot: new THREE.Euler(0, st.yaw, 0, 'YXZ'), power: 70, throttle: 0.7, isAfterburner: false };
+    fly(s, 1, null, st.y);
+    const p = new ReturnPilot();
+    p.start(end, s, { profile: P, groundHeight: GH, hMOf: (y) => y, groundAt: () => 0, side: -1 });
+    let t = 0, td = null, phases = [], nMax = 0;
+    while (t < 900) {
+      const u = p.update(s, DT, false);
+      if (!u) break;
+      if (phases[phases.length - 1] !== p.phase) phases.push(p.phase);
+      s.throttle = u.throttle;
+      s.power += (s.throttle * 100 - s.power) * Math.min(1, AIR.fighter.spool * DT);
+      s.isAfterburner = s.throttle > 0.7;
+      stepFixedWingAir(s, { pitch: u.pitch, roll: u.roll, yaw: u.yaw, autoAltFt: null, hM: s.pos.y, massKg: P.mass }, P, 'fighter', DT);
+      s.pos.addScaledVector(s.vel, DT);
+      nMax = Math.max(nMax, s.loadG);
+      t += DT;
+      if (s.pos.y <= GH) {
+        const along = -s.pos.z, cross = s.pos.x;
+        td = { fpm: -s.vel.y * 196.85, along, cross, kt: s.vel.length() / KT, bank: Math.abs(s.rot.z) * DEG, pitch: s.rot.x * DEG };
+        break;
+      }
+      if (s.pos.y < -50) break;
+    }
+    const ok = td && td.fpm < 590 && Math.abs(td.cross) < 15 && td.along > 0 && td.along < 1800 && td.kt < P.approachKt * 1.25 && td.bank < 5 && td.pitch > -5;
+    check(`9 RTB from ${st.name}: overhead break to a gentle touchdown on the runway`, !!ok,
+      td ? `${td.fpm.toFixed(0)} fpm, ${td.along.toFixed(0)} m past threshold, ${td.cross.toFixed(1)} m off centre, ${td.kt.toFixed(0)} kt, bank ${td.bank.toFixed(1)}, pitch ${td.pitch.toFixed(1)}, max ${nMax.toFixed(1)} g, ${t.toFixed(0)} s, ${phases.join('>')}`
+        : `no touchdown (${phases.join('>')}, ${t.toFixed(0)} s, y ${s.pos.y.toFixed(0)})`);
+  }
+}
+
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nAll checks passed');
 process.exit(failed ? 1 : 0);
