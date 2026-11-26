@@ -957,6 +957,7 @@
     const airports = await Airports.load('./assets/airports/south_india_airports.json');
     airports.registerFlatZones(terrain);
     scene.add(airports.group);
+    window.skyforgeTerrain = terrain; window.skyforgeAirports = airports; // console check (?fps=1 stall log times them)
     let activeEnd = airports.end('VOBL', '09L'); // take-off point, approach target and route home
     terrain.prime(0, 1800);
 
@@ -2752,6 +2753,7 @@
       return currentAircraft === 'fighter';
     }
 
+    visuals.precompile();   // every shader built now, while loading, not mid-flight (src/render/visuals.js)
     animate();
   </script>
 <script>
@@ -2826,6 +2828,136 @@
     });
     now.textContent = 'Pick a route: fly it and land smoothly for 3 stars.';
     render();
+  })();
+</script>
+<script>
+  // FPS counter, only with ?fps=1 in the address: current FPS, 5 s average, lowest (slowest single frame in the 5 s).
+  // Small box at the top centre, clicks pass through it; it only reads frame times, nothing in the game changes.
+  (function fpsCounter() {
+    if (new URLSearchParams(location.search).get('fps') !== '1') return;
+    const box = document.createElement('div');
+    box.id = 'sf-fps';
+    box.style.cssText = 'position:fixed;top:calc(4px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:10010;'
+      + 'pointer-events:none;padding:2px 8px;border-radius:4px;background:rgba(0,0,0,.6);color:#a3e635;font:bold 11px monospace;white-space:nowrap;'
+      + 'width:max-content;max-width:calc(96vw - 16px);box-sizing:border-box;';   // stays on screen on a narrow phone
+    const line = document.createElement('div');   // the counter
+    const log = document.createElement('div');    // stall log: last 5 frames over 200 ms
+    log.style.cssText = 'font:10px monospace;color:#fca5a5;text-align:left;white-space:normal;';   // long lines wrap on a phone
+    box.append(line, log);
+    document.body.appendChild(box);
+    const WINDOW_MS = 5000;
+    let frames = [];          // [time, frame length ms] for the last 5 s
+    let last = 0, shownAt = 0;
+
+    // Stall log (27-Nov-2026): reads values the game already exposes, changes nothing.
+    // Counts are compared with two frames back, so the work of the slow frame is caught whatever order the frames run in.
+    const STALL_MS = 200, STALL_LINES = 5;
+    const stalls = [];
+    let before = [null, null];
+    function counts() {
+      const r = window.skyforgeRenderer;
+      if (!r || !r.info) return null;
+      return { sh: r.info.programs ? r.info.programs.length : 0, geo: r.info.memory.geometries, tex: r.info.memory.textures };
+    }
+    const delta = (a, b, k) => (a && b ? (a[k] - b[k] >= 0 ? '+' : '') + (a[k] - b[k]) : '?');
+
+    // Timing hooks (27-Nov-2026): wrap terrain.update, airports.update and renderer.render to add up the time they
+    // take since the last counter tick (the slow frame), and count terrain tiles / airports built and removed.
+    // Each wrapper calls the original with the same arguments and returns its result; nothing else changes.
+    const acc = { terr: 0, apt: 0, render: 0, tBuilt: 0, tGone: 0, aBuilt: 0, aGone: 0 };
+    let hooked = false;
+    // JS heap: Chrome only (else '?'); performance.memory is a snapshot, so it is read fresh every frame
+    const mem = !!performance.memory;
+    const heapUsed = () => performance.memory.usedJSHeapSize;
+    let heapPrev = mem ? heapUsed() : 0;
+    function timed(obj, name, key) {
+      const orig = obj[name];
+      obj[name] = function () {
+        const t0 = performance.now();
+        const r = orig.apply(this, arguments);
+        acc[key] += performance.now() - t0;
+        return r;
+      };
+    }
+    function counted(obj, name, key) {
+      const orig = obj[name];
+      obj[name] = function () { acc[key]++; return orig.apply(this, arguments); };
+    }
+    function hook() {
+      const T = window.skyforgeTerrain, A = window.skyforgeAirports, R = window.skyforgeRenderer;
+      if (!T || !A || !R) return;
+      hooked = true;
+      counted(T, 'buildChunk', 'tBuilt');
+      const tUpdate = T.update;
+      T.update = function () {   // timed, plus tiles removed in this call (tiles before + built - tiles after)
+        const t0 = performance.now(), n0 = T.chunks.size, b0 = acc.tBuilt;
+        const r = tUpdate.apply(this, arguments);
+        acc.terr += performance.now() - t0;
+        acc.tGone += Math.max(0, n0 + (acc.tBuilt - b0) - T.chunks.size);
+        return r;
+      };
+      counted(A, 'buildAirport', 'aBuilt');
+      counted(A, 'dispose', 'aGone');
+      timed(A, 'update', 'apt');
+      timed(R, 'render', 'render');
+    }
+    function work(ms, heapMB) {
+      if (!hooked) return '';
+      const f = (v) => Math.round(v);
+      const rest = Math.max(0, ms - acc.terr - acc.apt - acc.render);
+      return '  terr ' + f(acc.terr) + ' ms (tiles +' + acc.tBuilt + '/-' + acc.tGone + ')  apt ' + f(acc.apt) + ' ms (+' + acc.aBuilt + '/-' + acc.aGone + ')'
+        + '  render ' + f(acc.render) + ' ms  rest ' + f(rest) + ' ms  heap ' + (heapMB === null ? '?' : (heapMB >= 0 ? '+' : '') + heapMB.toFixed(1) + ' MB');
+    }
+
+    function logStall(ms, c, old, heapMB) {
+      let px = '?', ft = '?', kt = '?', doing = '';
+      try {
+        if (window.skyforgeRenderer) px = window.skyforgeRenderer.getPixelRatio().toFixed(2);
+        if (window.skyforgeHeightFt) ft = Math.round(window.skyforgeHeightFt()).toLocaleString('en-GB');
+        if (window.skyforgeState) kt = Math.round(window.skyforgeState.ias);
+        const m = window.skyforgeManeuverState && window.skyforgeManeuverState();
+        if (m && m.flying) doing += '  MNV';
+        const rtbBtn = document.getElementById('btn-rtb');
+        if (rtbBtn && rtbBtn.classList.contains('active')) doing += '  RTB';
+      } catch (e) { /* a value not ready yet: keep '?' */ }
+      const text = new Date().toLocaleTimeString('en-GB') + '  ' + Math.round(ms) + ' ms (' + (1000 / ms).toFixed(0) + ' FPS)'
+        + '  shaders ' + delta(c, old, 'sh') + '  geo ' + delta(c, old, 'geo') + '  tex ' + delta(c, old, 'tex')
+        + '  px ' + px + '  ' + ft + ' ft  ' + kt + ' kt' + doing + work(ms, heapMB);
+      console.info('[stall] ' + text);
+      stalls.push(text);
+      if (stalls.length > STALL_LINES) stalls.shift();
+      log.textContent = '';
+      for (const s of stalls) { const d = document.createElement('div'); d.textContent = s; log.appendChild(d); }
+    }
+
+    function tick(now) {
+      requestAnimationFrame(tick);
+      const ms = last ? now - last : 0;
+      if (last) frames.push([now, ms]);
+      last = now;
+      const c = counts();
+      const heapNow = mem ? heapUsed() : 0;
+      if (ms > STALL_MS) logStall(ms, c, before[0], mem ? (heapNow - heapPrev) / 1048576 : null);
+      before = [before[1], c];
+      heapPrev = heapNow;
+      acc.terr = acc.apt = acc.render = acc.tBuilt = acc.tGone = acc.aBuilt = acc.aGone = 0;
+      if (!hooked) hook();
+      while (frames.length && now - frames[0][0] > WINDOW_MS) frames.shift();
+      if (now - shownAt < 250 || frames.length < 2) return;   // refresh the text 4 times a second
+      shownAt = now;
+      let sum = 0, worst = 0, recentSum = 0, recentN = 0;
+      for (const [t, ms] of frames) {
+        sum += ms; if (ms > worst) worst = ms;
+        if (now - t <= 1000) { recentSum += ms; recentN++; }
+      }
+      const cur = recentN ? 1000 * recentN / recentSum : 0;
+      const avg = 1000 * frames.length / sum;
+      line.textContent = 'FPS ' + cur.toFixed(0) + ' | 5s avg ' + avg.toFixed(0) + ' | low ' + (1000 / worst).toFixed(0);
+      line.style.color = avg >= 50 ? '#a3e635' : avg >= 30 ? '#fde047' : '#f87171';
+    }
+    // a hidden tab pauses the frames; start a fresh window when it comes back
+    document.addEventListener('visibilitychange', () => { frames = []; last = 0; });
+    requestAnimationFrame(tick);
   })();
 </script>
 </body>
