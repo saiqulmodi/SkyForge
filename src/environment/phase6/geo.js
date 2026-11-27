@@ -53,7 +53,9 @@ export const NH44_ROUTE = [
 
 // Other roads of the local grid
 export const ROADS = {
-  airportAccess: [[13.1830, 77.6840], [13.1880, 77.6950], [13.1940, 77.7040], [13.1975, 77.7090]],
+  // [13.1913, 77.6858] takes the road round the west end of runway 09R/27L (28-Nov-2026); the old point
+  // [13.1880, 77.6950] put the road across that runway about 1.1 km from its west end
+  airportAccess: [[13.1830, 77.6840], [13.1913, 77.6858], [13.1940, 77.7040], [13.1975, 77.7090]],
   devanahalliDoddaballapur: [[13.2450, 77.7050], [13.2550, 77.6600], [13.2700, 77.6000], [13.2955, 77.5375]],
   hennurBagalur: [[13.0400, 77.6400], [13.0900, 77.6550], [13.1350, 77.6680], [13.1700, 77.6800], [13.1830, 77.6840]]
 };
