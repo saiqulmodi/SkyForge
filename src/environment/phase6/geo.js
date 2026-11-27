@@ -42,9 +42,12 @@ export const PLACES = {
 };
 
 // NH44 (Bellary Road / Airport Expressway): Bengaluru -> Hebbal -> Yelahanka -> Trumpet -> Devanahalli -> north
+// [13.2080, 77.6800] keeps the road west of runway 09L and its approach lights (28-Nov-2026): the straight line
+// Trumpet -> [13.2150, 77.6960] crossed the runway 340 m past the 09L start point, so the jet and the chase
+// camera drove through the raised road and its traffic on the take-off roll (~170 kt).
 export const NH44_ROUTE = [
   [12.9900, 77.5900], [13.0358, 77.5970], [13.0800, 77.5980], [13.1150, 77.6060], [13.1450, 77.6280],
-  [13.1700, 77.6560], [13.1830, 77.6840], [13.2150, 77.6960], [13.2450, 77.7050], [13.3000, 77.7120],
+  [13.1700, 77.6560], [13.1830, 77.6840], [13.2080, 77.6800], [13.2150, 77.6960], [13.2450, 77.7050], [13.3000, 77.7120],
   [13.3700, 77.7230], [13.4300, 77.7270]
 ];
 
